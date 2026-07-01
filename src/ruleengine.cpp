@@ -4,6 +4,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QColor>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -72,6 +73,14 @@ void RuleEngine::apply(QVector<TrayItem> &items) const
                     item.replacementAvailable = false;
                     item.replacementStatus = QStringLiteral("File is not readable");
                 }
+            } else if (rule.replacementType == QStringLiteral("colorTint")) {
+                if (item.hasPixmapIcon) {
+                    item.replacementAvailable = false;
+                    item.replacementStatus = QStringLiteral("Color tint is not supported for pixmap icons");
+                } else if (!QColor::isValidColorName(rule.replacementValue)) {
+                    item.replacementAvailable = false;
+                    item.replacementStatus = QStringLiteral("Invalid color");
+                }
             }
             item.hasReplacement = true;
             break;
@@ -89,13 +98,19 @@ bool RuleEngine::addRuleForItem(const TrayItem &item, const QString &replacement
         return false;
     }
 
-    if (normalizedType != QStringLiteral("themeIcon") && normalizedType != QStringLiteral("localFile")) {
+    if (normalizedType != QStringLiteral("themeIcon")
+        && normalizedType != QStringLiteral("localFile")
+        && normalizedType != QStringLiteral("colorTint")) {
         return false;
     }
 
     if (normalizedType == QStringLiteral("localFile")) {
         const QFileInfo fileInfo(normalizedReplacement);
         if (!fileInfo.isFile() || !fileInfo.isReadable()) {
+            return false;
+        }
+    } else if (normalizedType == QStringLiteral("colorTint")) {
+        if (item.hasPixmapIcon || !QColor::isValidColorName(normalizedReplacement)) {
             return false;
         }
     }

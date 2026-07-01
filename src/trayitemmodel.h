@@ -55,6 +55,7 @@ public:
     Q_INVOKABLE void debugLog(const QString &message) const;
 
 Q_SIGNALS:
+    void itemsAboutToReload();
     void iconSearchFinished(int requestId, const QString &filter, const QStringList &names);
     void itemsReloaded();
     void statusNotifierItemsReloaded();

@@ -17,6 +17,20 @@ if [[ -z "${INSTALL_HOME}" ]]; then
     exit 1
 fi
 
+QT5COMPAT_GRAPHICS_QML_FOUND=0
+for qml_dir in /usr/lib/qt6/qml /usr/lib64/qt6/qml /usr/share/QtProject/qml; do
+    if [[ -f "${qml_dir}/Qt5Compat/GraphicalEffects/qmldir" ]]; then
+        QT5COMPAT_GRAPHICS_QML_FOUND=1
+        break
+    fi
+done
+
+if [[ "${QT5COMPAT_GRAPHICS_QML_FOUND}" -ne 1 ]]; then
+    echo "Missing Qt5Compat GraphicalEffects QML module." >&2
+    echo "Install qt6-5compat, then rerun: sudo ./install.sh" >&2
+    exit 1
+fi
+
 LOCAL_PLASMOID_DIRS=(
     "${INSTALL_HOME}/.local/share/plasma/plasmoids/${APPLET_ID}"
     "${INSTALL_HOME}/.local/share/kpackage/plasmoids/${APPLET_ID}"

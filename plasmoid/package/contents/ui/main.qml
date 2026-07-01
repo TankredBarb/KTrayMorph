@@ -3,6 +3,7 @@ pragma ComponentBehavior: Bound
 import QtQuick
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import Qt5Compat.GraphicalEffects as GraphicalEffects
 
 import org.kde.kirigami as Kirigami
 import org.kde.plasma.components as PlasmaComponents3
@@ -15,7 +16,7 @@ import org.ktraymorph.core
 PlasmoidItem {
     id: root
 
-    Plasmoid.icon: "org.ktraymorph.plasmoid"
+    Plasmoid.icon: root.replacementsActive ? "org.ktraymorph.plasmoid" : "org.ktraymorph.plasmoid-disabled"
     Plasmoid.status: PlasmaCore.Types.ActiveStatus
     readonly property bool onDesktop: Plasmoid.formFactor === PlasmaCore.Types.Planar
     preferredRepresentation: root.onDesktop ? fullRepresentation : null
@@ -32,10 +33,15 @@ PlasmoidItem {
     property int iconSearchRequestId: 0
     property int startupScanAttempts: 0
     property int statusNotifierReapplyAttempts: 0
+    property int overrideBurstAttempts: 0
     property string plasmaTrayItemsSignature: ""
+    property var livePlasmaIconNamesById: ({})
+    property var appletObservedIconsById: ({})
+    property var appletObservedSourcesById: ({})
     property bool localIconDialogActive: false
     property bool trayPlacementChecked: false
     property bool validTrayPlacement: false
+    readonly property bool replacementsActive: Boolean(Plasmoid.configuration.active ?? true)
     readonly property int effectivePollIntervalMs: root.normalizedPollIntervalMs(Plasmoid.configuration.pollIntervalMs)
 
     onExpandedChanged: {
@@ -63,27 +69,154 @@ PlasmoidItem {
 
         onStatusNotifierItemsReloaded: root.handleStatusNotifierItemsReloaded()
 
-        onItemsReloaded: Qt.callLater(root.applyPersistedLiveReplacements)
+        onItemsReloaded: {
+            if (root.replacementsActive) {
+                Qt.callLater(root.applyPersistedLiveReplacements);
+            }
+        }
     }
 
     LiveReplacementController {
         id: replacer
         trayModel: trayItems
+        rootQmlObject: root
 
         onNeedsRetarget: function(stableId) {
+            if (!root.replacementsActive) {
+                return;
+            }
             root.debugLog("QML needsRetarget stableId=" + stableId);
             root.collectPlasmaTrayDelegates();
             root.applyPersistedLiveReplacements();
+            root.scheduleOverrideBurst();
+        }
+
+        onDebugLog: function(message) {
+            root.debugLog("Controller: " + message);
         }
 
         onRecordsChanged: {
-            if (replacer.recordCount() > 0) {
+            if (root.replacementsActive && replacer.recordCount() > 0) {
                 if (!overridePollTimer.running) {
                     overridePollTimer.restart();
                 }
             }
         }
     }
+
+    Component {
+        id: iconOverlayComponent
+
+        Item {
+            objectName: "ktraymorphOverlay"
+            property Item targetItem: null
+            property real targetOriginalOpacity: 1
+            property alias source: overlayIcon.source
+            property string replacementType: "themeIcon"
+            property string replacementValue: ""
+            readonly property bool tintLayerEnabled: tintOverlay.visible
+            readonly property string tintColor: overlayIcon.parent.replacementValue.length > 0
+                ? overlayIcon.parent.replacementValue
+                : Kirigami.Theme.highlightColor
+            readonly property string tintRenderer: "ColorOverlay"
+            z: 1000
+            visible: true
+
+            Kirigami.Icon {
+                id: overlayIcon
+
+                anchors.fill: parent
+                smooth: true
+                visible: parent.replacementType !== "colorTint"
+            }
+
+            Kirigami.Icon {
+                id: tintSourceIcon
+
+                anchors.fill: parent
+                source: overlayIcon.source
+                smooth: true
+                visible: false
+            }
+
+            GraphicalEffects.ColorOverlay {
+                id: tintOverlay
+
+                anchors.fill: parent
+                source: tintSourceIcon
+                color: parent.tintColor
+                cached: false
+                visible: parent.replacementType === "colorTint"
+            }
+        }
+    }
+
+    function createIconOverlay(parentItem, source) {
+        if (!parentItem) {
+            root.debugLog("createIconOverlay: null parent");
+            return null;
+        }
+
+        const siblingParent = parentItem.parent;
+        if (!siblingParent) {
+            root.debugLog("createIconOverlay: null siblingParent");
+            return null;
+        }
+
+        let overlay = null;
+        try {
+            overlay = iconOverlayComponent.createObject(siblingParent, {
+                "targetItem": parentItem,
+                "targetOriginalOpacity": parentItem.opacity,
+                "anchors.fill": parentItem
+            });
+        } catch (err) {
+            root.debugLog("createIconOverlay: exception " + err);
+            return null;
+        }
+
+        if (!overlay) {
+            root.debugLog("createIconOverlay: createObject returned null");
+            return null;
+        }
+
+        overlay.source = source;
+        parentItem.opacity = 0;
+        root.debugLog("createIconOverlay OK target=" + root.describeItem(parentItem)
+            + " overlay=" + root.describeItem(overlay)
+            + " source=[" + overlay.source + "]");
+        return overlay;
+    }
+
+    function destroyIconOverlay(overlay) {
+        if (!overlay) {
+            return false;
+        }
+
+        try {
+            if (overlay.targetItem) {
+                overlay.targetItem.opacity = overlay.targetOriginalOpacity;
+            }
+            overlay.destroy();
+        } catch (err) {
+            root.debugLog("destroyIconOverlay: exception " + err);
+            return false;
+        }
+        return true;
+    }
+
+    PlasmaCore.Action {
+        id: toggleActiveAction
+
+        text: root.replacementsActive ? "Disable KTrayMorph" : "Enable KTrayMorph"
+        icon.name: root.replacementsActive ? "media-playback-pause-symbolic" : "media-playback-start-symbolic"
+        onTriggered: {
+            Plasmoid.configuration.active = !root.replacementsActive;
+            Qt.callLater(root.handleActiveChanged);
+        }
+    }
+
+    Plasmoid.contextualActions: [toggleActiveAction]
 
     function configureLoggingFromSettings() {
         trayItems.configureLogging(Boolean(Plasmoid.configuration.enableLogging),
@@ -114,8 +247,31 @@ PlasmoidItem {
         }
 
         function onPollIntervalMsChanged() {
-            overridePollTimer.restart();
+            if (root.replacementsActive) {
+                overridePollTimer.restart();
+            }
         }
+
+        function onActiveChanged() {
+            root.handleActiveChanged();
+        }
+    }
+
+    function handleActiveChanged() {
+        if (!replacementsActive) {
+            statusNotifierReapplyTimer.stop();
+            overrideBurstTimer.stop();
+            overridePollTimer.stop();
+            replacer.restoreAll();
+            root.debugLog("QML replacements disabled; restored live overrides");
+            return;
+        }
+
+        overridePollTimer.restart();
+        root.scanPlasmaTrayItems();
+        Qt.callLater(root.applyPersistedLiveReplacements);
+        root.scheduleOverrideBurst();
+        root.debugLog("QML replacements enabled");
     }
 
     function openIconPicker() {
@@ -134,6 +290,14 @@ PlasmoidItem {
         Qt.callLater(function() {
             root.expanded = true;
         });
+    }
+
+    function openColorDialog() {
+        colorTintDialog.selectedColor = replacementIconType === "colorTint" && replacementIconName.length > 0
+            ? replacementIconName
+            : Kirigami.Theme.highlightColor;
+        localIconDialogActive = true;
+        colorTintDialog.open();
     }
 
     function updateIconSearch(query) {
@@ -188,7 +352,38 @@ PlasmoidItem {
         if (type === "localFile") {
             return localFileSource(value);
         }
+        if (type === "colorTint") {
+            return "color-management-symbolic";
+        }
         return value;
+    }
+
+    function isColorTint(type) {
+        return type === "colorTint";
+    }
+
+    function colorTintSource(originalIcon, target, fallbackSource) {
+        const originalIconText = sourceText(originalIcon);
+        if (originalIconText.length > 0) {
+            return originalIconText;
+        }
+        if (target && hasProperty(target, "source")) {
+            const targetSourceText = sourceText(target.source);
+            if (targetSourceText.length > 0) {
+                return targetSourceText;
+            }
+        }
+        return fallbackSource;
+    }
+
+    function liveOriginalIconForReplacement(stableId, originalIcon, replacementType) {
+        if (replacementType === "colorTint") {
+            const liveIcon = livePlasmaIconNamesById[stableId] ?? "";
+            if (liveIcon.length > 0) {
+                return liveIcon;
+            }
+        }
+        return originalIcon;
     }
 
     function currentReplacementSource() {
@@ -230,6 +425,26 @@ PlasmoidItem {
         }
     }
 
+    ColorDialog {
+        id: colorTintDialog
+
+        title: "Choose tint color"
+        onAccepted: {
+            root.replacementIconType = "colorTint";
+            root.replacementIconName = selectedColor.toString();
+            Qt.callLater(function() {
+                root.expanded = true;
+                root.localIconDialogActive = false;
+            });
+        }
+        onRejected: {
+            Qt.callLater(function() {
+                root.expanded = true;
+                root.localIconDialogActive = false;
+            });
+        }
+    }
+
     Timer {
         id: iconSearchDebounce
         interval: 140
@@ -248,30 +463,110 @@ PlasmoidItem {
         id: statusNotifierReapplyTimer
         interval: 80
         repeat: false
-        onTriggered: root.runStatusNotifierReapplyPass()
+        onTriggered: {
+            if (root.replacementsActive) {
+                root.runStatusNotifierReapplyPass();
+            }
+        }
+    }
+
+    Timer {
+        id: overrideBurstTimer
+        interval: 50
+        repeat: false
+        onTriggered: root.runOverrideBurstPass()
     }
 
     Timer {
         id: overridePollTimer
         interval: root.effectivePollIntervalMs
         repeat: true
-        running: true
+        running: false
         onTriggered: {
+            if (!root.replacementsActive) {
+                return;
+            }
             if (replacer.recordCount() === 0 && !trayItems.hasReplacementItems()) {
                 return;
             }
-            const replacementItems = trayItems.replacementItems();
+            root.runOverridePass(false);
+        }
+    }
 
-            const result = root.collectPlasmaTrayDelegates();
-            root.trayPlacementChecked = true;
-            root.validTrayPlacement = result.ok;
-            root.plasmaTrayScanStatus = result.status;
-            if (!result.ok) {
-                return;
+    function runOverridePass(forceModelUpdate) {
+        if (!root.replacementsActive) {
+            return false;
+        }
+
+        const result = root.collectPlasmaTrayDelegates();
+        root.trayPlacementChecked = true;
+        root.validTrayPlacement = result.ok;
+        root.plasmaTrayScanStatus = result.status;
+        if (!result.ok) {
+            return false;
+        }
+
+        root.rememberLivePlasmaIconNames(result.items);
+        root.updatePlasmaTrayItems(result.items, forceModelUpdate);
+        root.logAppletIconObservations();
+        root.applyPersistedLiveReplacements();
+        replacer.reassertAll();
+        return true;
+    }
+
+    function rememberLivePlasmaIconNames(items) {
+        const next = {};
+        for (let i = 0; i < items.length; i++) {
+            const stableId = String(items[i].stableId ?? "");
+            const iconName = String(items[i].iconName ?? "");
+            if (stableId.length > 0 && iconName.length > 0) {
+                next[stableId] = iconName;
             }
-            root.updatePlasmaTrayItems(result.items, false);
-            root.applyPersistedLiveReplacements(replacementItems);
-            replacer.reassertAll();
+        }
+        livePlasmaIconNamesById = next;
+    }
+
+    function logObservedChange(cache, stableId, value, label) {
+        if (value.length === 0) {
+            return;
+        }
+        const previous = cache[stableId] ?? "";
+        if (previous === value) {
+            return;
+        }
+        cache[stableId] = value;
+        root.debugLog("QML observed " + label + " stableId=" + stableId
+            + " previous=[" + previous + "] current=[" + value + "]");
+    }
+
+    function logAppletIconObservations() {
+        if (!Boolean(Plasmoid.configuration.enableLogging)) {
+            return;
+        }
+
+        const replacementItems = trayItems.replacementItems();
+        for (let i = 0; i < replacementItems.length; i++) {
+            const stableId = replacementItems[i].stableId;
+            const bundle = plasmaTrayDelegatesById[stableId] ?? null;
+            if (!bundle || bundle.itemType !== "Plasmoid") {
+                continue;
+            }
+
+            const plasmoid = bundle?.applet?.plasmoid ?? null;
+            if (plasmoid && hasProperty(plasmoid, "icon")) {
+                root.logObservedChange(appletObservedIconsById,
+                                       stableId,
+                                       sourceText(plasmoid.icon),
+                                       "applet.plasmoid.icon");
+            }
+
+            const directTarget = directIconSourceTarget(bundle);
+            if (directTarget && hasProperty(directTarget, "source")) {
+                root.logObservedChange(appletObservedSourcesById,
+                                       stableId,
+                                       sourceText(directTarget.source),
+                                       "direct visual source");
+            }
         }
     }
 
@@ -328,22 +623,61 @@ PlasmoidItem {
     function handleStatusNotifierItemsReloaded() {
         root.debugLog("QML SNI reload received; scheduling tray scan and delayed replacement reapply");
         Qt.callLater(root.scanPlasmaTrayItems);
-        scheduleStatusNotifierReapply();
+        if (root.replacementsActive) {
+            scheduleStatusNotifierReapply();
+        }
     }
 
     function scheduleStatusNotifierReapply() {
+        if (!root.replacementsActive) {
+            return;
+        }
         statusNotifierReapplyAttempts = 0;
         statusNotifierReapplyTimer.interval = 80;
         statusNotifierReapplyTimer.restart();
     }
 
+    function scheduleOverrideBurst() {
+        if (!root.replacementsActive) {
+            return;
+        }
+
+        overrideBurstAttempts = 0;
+        overrideBurstTimer.interval = 50;
+        overrideBurstTimer.restart();
+    }
+
+    function runOverrideBurstPass() {
+        if (!root.replacementsActive) {
+            return;
+        }
+
+        overrideBurstAttempts += 1;
+        root.debugLog("QML override burst pass=" + overrideBurstAttempts);
+        root.runOverridePass(true);
+
+        if (overrideBurstAttempts >= 5) {
+            return;
+        }
+
+        overrideBurstTimer.interval = overrideBurstAttempts === 1 ? 120
+            : overrideBurstAttempts === 2 ? 250
+            : overrideBurstAttempts === 3 ? 500
+            : 900;
+        overrideBurstTimer.restart();
+    }
+
     function runStatusNotifierReapplyPass() {
+        if (!root.replacementsActive) {
+            return;
+        }
         statusNotifierReapplyAttempts += 1;
         root.debugLog("QML SNI delayed reapply pass=" + statusNotifierReapplyAttempts
             + " liveCount=" + replacer.recordCount());
 
         root.scanPlasmaTrayItems();
         root.applyPersistedLiveReplacements();
+        replacer.reassertAll();
 
         if (statusNotifierReapplyAttempts >= 4) {
             return;
@@ -462,6 +796,7 @@ PlasmoidItem {
 
         if (!result.ok) {
             plasmaTrayItemsSignature = "";
+            livePlasmaIconNamesById = ({});
             trayItems.setPlasmaItems([]);
             if (retryOnMissing) {
                 scheduleStartupScanRetry();
@@ -469,6 +804,7 @@ PlasmoidItem {
             return;
         }
 
+        root.rememberLivePlasmaIconNames(result.items);
         root.updatePlasmaTrayItems(result.items, true);
         root.debugLog("QML scanPlasmaTrayItems completed. Status=" + plasmaTrayScanStatus
             + " Keys in delegatesById=[" + Object.keys(plasmaTrayDelegatesById).join(",") + "]");
@@ -490,8 +826,62 @@ PlasmoidItem {
         return source !== null && source !== undefined && sourceText(source).length > 0;
     }
 
+    function describeItem(item) {
+        if (!item) {
+            return "null";
+        }
+        const details = [];
+        details.push(String(item));
+        if (hasProperty(item, "objectName") && String(item.objectName).length > 0) {
+            details.push("objectName=" + item.objectName);
+        }
+        if (hasProperty(item, "source")) {
+            details.push("source=" + sourceText(item.source));
+        }
+        if (hasProperty(item, "replacementType")) {
+            details.push("replacementType=" + item.replacementType);
+        }
+        if (hasProperty(item, "replacementValue")) {
+            details.push("replacementValue=" + item.replacementValue);
+        }
+        if (hasProperty(item, "tintLayerEnabled")) {
+            details.push("tintLayerEnabled=" + item.tintLayerEnabled);
+        }
+        if (hasProperty(item, "tintColor")) {
+            details.push("tintColor=" + item.tintColor);
+        }
+        if (hasProperty(item, "tintRenderer")) {
+            details.push("tintRenderer=" + item.tintRenderer);
+        }
+        if (hasProperty(item, "visible")) {
+            details.push("visible=" + item.visible);
+        }
+        if (hasProperty(item, "opacity")) {
+            details.push("opacity=" + item.opacity);
+        }
+        if (hasProperty(item, "width") && hasProperty(item, "height")) {
+            details.push("size=" + item.width + "x" + item.height);
+        }
+        return details.join(" ");
+    }
+
+    function isKTrayMorphOverlayItem(item) {
+        let candidate = item;
+        while (candidate) {
+            if (hasProperty(candidate, "objectName") && candidate.objectName === "ktraymorphOverlay") {
+                return true;
+            }
+            candidate = candidate.parent ?? null;
+        }
+        return false;
+    }
+
     function findIconSourceTarget(item, expectedSource, depth) {
         if (!item || depth > 6) {
+            return null;
+        }
+
+        if (isKTrayMorphOverlayItem(item)) {
             return null;
         }
 
@@ -536,6 +926,9 @@ PlasmoidItem {
             }
             for (let j = 0; j < container.children.length; j++) {
                 const child = container.children[j];
+                if (isKTrayMorphOverlayItem(child)) {
+                    continue;
+                }
                 if (hasProperty(child, "source")) {
                     return child;
                 }
@@ -545,63 +938,84 @@ PlasmoidItem {
         return null;
     }
 
-    function iconTargetForStableId(stableId, expectedSource) {
+    function iconTargetForStableId(stableId, expectedSource, trace) {
         const bundle = plasmaTrayDelegatesById[stableId] ?? null;
         if (!bundle) {
+            if (trace) {
+                root.debugLog("QML iconTargetForStableId no bundle stableId=" + stableId);
+            }
             return null;
         }
 
         const directTarget = directIconSourceTarget(bundle);
         if (directTarget) {
+            if (trace) {
+                root.debugLog("QML iconTargetForStableId direct stableId=" + stableId
+                    + " itemType=" + (bundle.itemType ?? "")
+                    + " target=" + root.describeItem(directTarget));
+            }
             return directTarget;
         }
 
         if (expectedSource.length === 0) {
+            if (trace) {
+                root.debugLog("QML iconTargetForStableId empty expectedSource stableId=" + stableId);
+            }
             return null;
         }
 
         let target = findIconSourceTarget(bundle.modelItem ?? null, expectedSource, 0);
         if (target) {
+            if (trace) {
+                root.debugLog("QML iconTargetForStableId model match stableId=" + stableId
+                    + " expectedSource=[" + expectedSource + "] target=" + root.describeItem(target));
+            }
             return target;
         }
 
         target = findIconSourceTarget(bundle.delegateItem ?? null, expectedSource, 0);
         if (target) {
+            if (trace) {
+                root.debugLog("QML iconTargetForStableId delegate match stableId=" + stableId
+                    + " expectedSource=[" + expectedSource + "] target=" + root.describeItem(target));
+            }
             return target;
         }
 
-        return findIconSourceTarget(bundle.applet?.compactRepresentationItem ?? null, expectedSource, 0);
+        target = findIconSourceTarget(bundle.applet?.compactRepresentationItem ?? null, expectedSource, 0);
+        if (trace) {
+            root.debugLog("QML iconTargetForStableId compact match stableId=" + stableId
+                + " expectedSource=[" + expectedSource + "] target=" + root.describeItem(target));
+        }
+        return target;
     }
 
     function applyLiveReplacement(stableId, originalIcon, service, path, replacementType, replacementIcon) {
+        if (!root.replacementsActive) {
+            return false;
+        }
+
         const normalizedReplacement = replacementIcon.trim();
         if (stableId.length === 0 || normalizedReplacement.length === 0) {
             root.debugLog("QML applyLiveReplacement refused: empty stableId or replacementIcon");
             return false;
         }
 
+        const target = iconTargetForStableId(stableId, originalIcon, false);
         const replacementSourceValue = replacementSource(replacementType, normalizedReplacement);
-        const replacementSourceText = sourceText(replacementSourceValue);
-
-        if (replacer.hasRecord(stableId)) {
-            const retarget = iconTargetForStableId(stableId, originalIcon);
-            if (retarget) {
-                replacer.retarget(stableId, retarget);
-            }
-            root.debugLog("QML applyLiveReplacement updating existing record stableId=" + stableId
-                + " replacementSource=" + replacementSourceText);
-            return replacer.updateReplacement(stableId, replacementType, normalizedReplacement, replacementSourceText);
-        }
-
+        const replacementSourceText = root.isColorTint(replacementType)
+            ? root.colorTintSource(originalIcon, target, sourceText(replacementSourceValue))
+            : sourceText(replacementSourceValue);
         const bundle = plasmaTrayDelegatesById[stableId] ?? null;
         const isStatusNotifier = bundle?.itemType === "StatusNotifier";
 
-        if (!isStatusNotifier && originalIcon.length === 0) {
-            root.debugLog("QML applyLiveReplacement refused: no original icon for plasmoid stableId=" + stableId);
-            return false;
+        if (replacer.hasRecord(stableId)) {
+            if (target) {
+                replacer.retarget(stableId, target);
+            }
+            return replacer.updateReplacement(stableId, replacementType, normalizedReplacement, replacementSourceText);
         }
 
-        const target = iconTargetForStableId(stableId, originalIcon);
         if (!target) {
             plasmaTrayScanStatus = "Plasma tray: icon target not found for " + stableId;
             root.debugLog("QML applyLiveReplacement: target icon not found in QML tree for stableId=" + stableId);
@@ -610,11 +1024,9 @@ PlasmoidItem {
 
         return replacer.registerReplacement(stableId,
                                              target,
-                                             originalIcon,
                                              replacementSourceText,
                                              replacementType,
                                              normalizedReplacement,
-                                             originalIcon,
                                              isStatusNotifier,
                                              service ?? "",
                                              path ?? "");
@@ -649,6 +1061,10 @@ PlasmoidItem {
     }
 
     function applyPersistedLiveReplacement(stableId, originalIcon, service, path, replacementType, replacementIcon, replacementAvailable) {
+        if (!root.replacementsActive) {
+            return false;
+        }
+
         if (!replacementAvailable || !replacementIcon || replacementIcon.length === 0) {
             return false;
         }
@@ -657,10 +1073,16 @@ PlasmoidItem {
     }
 
     function applyPersistedLiveReplacements(items) {
+        if (!root.replacementsActive) {
+            return;
+        }
+
         const replacementItems = items ?? trayItems.replacementItems();
         for (let i = 0; i < replacementItems.length; i++) {
             applyPersistedLiveReplacement(replacementItems[i].stableId,
-                                          replacementItems[i].iconName,
+                                          root.liveOriginalIconForReplacement(replacementItems[i].stableId,
+                                                                              replacementItems[i].iconName,
+                                                                              replacementItems[i].replacementType),
                                           replacementItems[i].service,
                                           replacementItems[i].path,
                                           replacementItems[i].replacementType,
@@ -672,11 +1094,15 @@ PlasmoidItem {
     Component.onCompleted: {
         root.configureLoggingFromSettings();
         root.debugLog("=== applet QML loaded ===");
+        if (root.replacementsActive) {
+            overridePollTimer.start();
+        }
         Qt.callLater(function() {
             root.scanPlasmaTrayItems(true);
         });
     }
     Component.onDestruction: {
+        overrideBurstTimer.stop();
         overridePollTimer.stop();
         replacer.restoreAll();
     }
@@ -694,6 +1120,8 @@ PlasmoidItem {
             ColumnLayout {
                 anchors.fill: parent
                 visible: root.onDesktop || (root.trayPlacementChecked && root.validTrayPlacement)
+                enabled: root.replacementsActive
+                opacity: root.replacementsActive ? 1.0 : 0.45
                 spacing: 0
 
             PlasmaExtras.PlasmoidHeading {
@@ -703,9 +1131,22 @@ PlasmoidItem {
                     spacing: Kirigami.Units.smallSpacing
 
                     Kirigami.Icon {
+                        visible: root.replacementIconType !== "colorTint"
                         source: root.currentReplacementSource()
                         implicitWidth: Kirigami.Units.iconSizes.smallMedium
                         implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                    }
+
+                    Rectangle {
+                        visible: root.replacementIconType === "colorTint"
+                        color: root.replacementIconName.length > 0
+                            ? root.replacementIconName
+                            : Kirigami.Theme.highlightColor
+                        radius: 2
+                        border.color: Kirigami.Theme.disabledTextColor
+                        border.width: 1
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                     }
 
                     PlasmaComponents3.TextField {
@@ -714,7 +1155,7 @@ PlasmoidItem {
                         text: root.replacementIconType === "localFile"
                             ? root.fileName(root.replacementIconName)
                             : root.replacementIconName
-                        placeholderText: "Icon name or custom file"
+                        placeholderText: "Icon name, custom file, or color"
                         selectByMouse: true
                         Layout.fillWidth: true
                         onTextEdited: {
@@ -740,6 +1181,14 @@ PlasmoidItem {
                     }
 
                     PlasmaComponents3.ToolButton {
+                        icon.name: "color-management-symbolic"
+                        PlasmaComponents3.ToolTip.text: "Choose tint color"
+                        PlasmaComponents3.ToolTip.visible: hovered
+                        PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
+                        onClicked: root.openColorDialog()
+                    }
+
+                    PlasmaComponents3.ToolButton {
                         icon.name: "view-refresh-symbolic"
                         PlasmaComponents3.ToolTip.text: "Refresh tray items"
                         PlasmaComponents3.ToolTip.visible: hovered
@@ -757,25 +1206,57 @@ PlasmoidItem {
                         PlasmaComponents3.ToolTip.visible: hovered
                         PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
                         onClicked: {
+                            const savedContentY = listView.contentY;
                             replacer.restoreAll();
                             trayItems.clearRules();
+                            listView.restoreContentY(savedContentY);
                         }
                     }
                 }
             }
 
-            ListView {
-                id: listView
+                ListView {
+                    id: listView
 
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                 clip: true
-                model: trayItems
-                spacing: Kirigami.Units.smallSpacing
+                    model: trayItems
+                    spacing: Kirigami.Units.smallSpacing
 
-                section.property: "kind"
-                section.delegate: PlasmaExtras.PlasmoidHeading {
-                    id: sectionHeading
+                    section.property: "kind"
+                    property real preservedContentY: 0
+                    property bool hasPreservedContentY: false
+
+                    function restoreContentY(savedContentY) {
+                        Qt.callLater(function() {
+                            listView.forceLayout();
+                            const maxContentY = Math.max(0, listView.contentHeight - listView.height);
+                            listView.contentY = Math.max(0, Math.min(savedContentY, maxContentY));
+                        });
+                    }
+
+                    Connections {
+                        target: trayItems
+
+                        function onItemsAboutToReload() {
+                            listView.preservedContentY = listView.contentY;
+                            listView.hasPreservedContentY = true;
+                        }
+
+                        function onItemsReloaded() {
+                            if (!listView.hasPreservedContentY) {
+                                return;
+                            }
+
+                            const savedContentY = listView.preservedContentY;
+                            listView.hasPreservedContentY = false;
+                            listView.restoreContentY(savedContentY);
+                        }
+                    }
+
+                    section.delegate: PlasmaExtras.PlasmoidHeading {
+                        id: sectionHeading
 
                     required property string section
                     width: listView.width
@@ -874,12 +1355,40 @@ PlasmoidItem {
                                 ? root.replacementSource(itemDelegate.replacementType, itemDelegate.replacementIcon)
                                 : "dialog-warning-symbolic"
                             : "image-missing-symbolic"
-                        visible: itemDelegate.hasReplacement
+                        visible: itemDelegate.hasReplacement && !root.isColorTint(itemDelegate.replacementType)
                         implicitWidth: Kirigami.Units.iconSizes.smallMedium
                         implicitHeight: Kirigami.Units.iconSizes.smallMedium
                         PlasmaComponents3.ToolTip.text: itemDelegate.replacementAvailable
                             ? root.tooltipText(itemDelegate.replacementIcon)
                             : itemDelegate.replacementStatus + ": " + root.tooltipText(itemDelegate.replacementIcon)
+                        PlasmaComponents3.ToolTip.visible: itemDelegate.hasReplacement && itemDelegate.hovered
+                        PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+
+                    Rectangle {
+                        visible: itemDelegate.hasReplacement && root.isColorTint(itemDelegate.replacementType)
+                            && itemDelegate.replacementAvailable
+                        color: itemDelegate.replacementAvailable && itemDelegate.replacementIcon.length > 0
+                            ? itemDelegate.replacementIcon
+                            : Kirigami.Theme.highlightColor
+                        radius: 2
+                        border.color: Kirigami.Theme.disabledTextColor
+                        border.width: 1
+                        Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                        Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
+                        PlasmaComponents3.ToolTip.text: root.tooltipText(itemDelegate.replacementIcon)
+                        PlasmaComponents3.ToolTip.visible: itemDelegate.hasReplacement && itemDelegate.hovered
+                        PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
+                    }
+
+                    Kirigami.Icon {
+                        source: "dialog-warning-symbolic"
+                        visible: itemDelegate.hasReplacement && root.isColorTint(itemDelegate.replacementType)
+                            && !itemDelegate.replacementAvailable
+                        implicitWidth: Kirigami.Units.iconSizes.smallMedium
+                        implicitHeight: Kirigami.Units.iconSizes.smallMedium
+                        PlasmaComponents3.ToolTip.text: itemDelegate.replacementStatus + ": "
+                            + root.tooltipText(itemDelegate.replacementIcon)
                         PlasmaComponents3.ToolTip.visible: itemDelegate.hasReplacement && itemDelegate.hovered
                         PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
                     }
@@ -910,18 +1419,25 @@ PlasmoidItem {
 
                     PlasmaComponents3.ToolButton {
                         icon.name: itemDelegate.hasReplacement ? "ktraymorph-update-symbolic" : "document-replace-symbolic"
-                        enabled: root.replacementIconName.length > 0
+                        enabled: root.replacementsActive && root.replacementIconName.length > 0
+                            && !(root.isColorTint(root.replacementIconType) && itemDelegate.hasPixmapIcon)
                         PlasmaComponents3.ToolTip.text: itemDelegate.hasReplacement
-                            ? "Update replacement for " + itemDelegate.title
-                            : "Replace " + itemDelegate.title + " with selected icon"
+                            ? root.isColorTint(root.replacementIconType) && itemDelegate.hasPixmapIcon
+                                ? "Color tint is not supported for pixmap icons"
+                                : "Update replacement for " + itemDelegate.title
+                            : root.isColorTint(root.replacementIconType) && itemDelegate.hasPixmapIcon
+                                ? "Color tint is not supported for pixmap icons"
+                                : "Replace " + itemDelegate.title + " with selected icon"
                         PlasmaComponents3.ToolTip.visible: hovered
                         PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
                         onClicked: {
+                            const savedContentY = listView.contentY;
                             root.debugLog("QML Click replace for stableId=" + itemDelegate.stableId
                                 + " index=" + itemDelegate.index + " replacementIconName=" + root.replacementIconName);
                             const added = trayItems.addReplacementRule(itemDelegate.index,
                                                                        root.replacementIconType,
                                                                        root.replacementIconName);
+                            listView.restoreContentY(savedContentY);
                             root.debugLog("QML addReplacementRule returned=" + added);
                             if (added && (itemDelegate.kind === "PlasmaApplet" || itemDelegate.kind === "StatusNotifier")) {
                                 const applied = root.applyLiveReplacement(itemDelegate.stableId,
@@ -931,6 +1447,7 @@ PlasmoidItem {
                                                                          root.replacementIconType,
                                                                          root.replacementIconName);
                                 root.debugLog("QML applyLiveReplacement returned=" + applied);
+                                root.scheduleOverrideBurst();
                             }
                         }
                     }
@@ -942,8 +1459,10 @@ PlasmoidItem {
                         PlasmaComponents3.ToolTip.visible: hovered
                         PlasmaComponents3.ToolTip.delay: Kirigami.Units.toolTipDelay
                         onClicked: {
+                            const savedContentY = listView.contentY;
                             replacer.restore(itemDelegate.stableId);
                             trayItems.removeReplacementRules(itemDelegate.index);
+                            listView.restoreContentY(savedContentY);
                         }
                     }
                 }

@@ -17,7 +17,7 @@ include(KDEInstallDirs)
 include(KDECMakeSettings)
 include(KDECompilerSettings NO_POLICY_SCOPE)
 
-find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Qml Quick DBus Concurrent)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Gui Qml Quick DBus Concurrent Core5Compat)
 find_package(KF6 REQUIRED COMPONENTS Config I18n IconThemes Package)
 
 qt_standard_project_setup(REQUIRES 6.6)
@@ -26,5 +26,5 @@ add_subdirectory(src)
 add_subdirectory(plasmoid)
 
 install(FILES icons/org.ktraymorph.plasmoid.svg DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps)
+install(FILES icons/org.ktraymorph.plasmoid-disabled.svg DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/apps)
 install(FILES icons/ktraymorph-update-symbolic.svg DESTINATION ${KDE_INSTALL_ICONDIR}/hicolor/scalable/actions)
-

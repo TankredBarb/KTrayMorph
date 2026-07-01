@@ -12,15 +12,18 @@ It can replace and restore:
 - StatusNotifierItem icons with a stable theme icon name, such as Yakuake.
 - StatusNotifierItem icons that expose only pixmap data, such as Telegram.
 
-Rules are persisted in the user's config and are re-applied while the KTrayMorph widget is active. Live visual changes are restored when the widget is destroyed or removed from the panel.
+Rules are persisted in the user's config and are re-applied while the KTrayMorph widget is active. Live visual changes are removed when the widget is disabled, destroyed, or removed from the panel.
 
 Live replacement state is owned by a C++ `LiveReplacementController` (`src/livereplacementcontroller.h/cpp`, exposed to QML as `org.ktraymorph.core.LiveReplacementController`). QML only inspects the Plasma system-tray QML tree to locate icon targets and forwards them to the controller. The controller persists original/replacement sources, reasserts replacement on drift, and restores the original on undo/widget teardown.
 
+Current live replacement uses an overlay model. KTrayMorph creates its own `Kirigami.Icon` overlay above the native tray icon and hides the native visual item by opacity. It does not mutate the native icon's `source` binding. Restore removes the overlay and reveals the native tray icon in its current state.
+
 Replacement reassert currently uses an explicit polling approach:
 
-- Event layer: the controller connects to the target `source` property's notify signal (`QMetaProperty::notifySignal()`) and reasserts the replacement synchronously on every drift (Play->Pause, volume level, pixmap update). Latency is 0 (at most one rendered frame).
-- Polling layer: an always-on root QML timer re-scans tray delegates, reapplies persisted replacements, and calls `LiveReplacementController::reassertAll()` at the configured interval when replacements exist. The default is 850ms, clamped to 250-5000ms. This intentionally favors reliability over event purity because dynamic Plasma applets can swap their visible icon target without a useful signal for KTrayMorph.
+- Polling layer: an active root QML timer re-scans tray delegates, reapplies persisted replacements, and calls `LiveReplacementController::reassertAll()` at the configured interval when replacements exist. The default is 850ms, clamped to 250-5000ms. This intentionally favors reliability over event purity because dynamic Plasma applets can swap their visible icon target without a useful signal for KTrayMorph.
+- Burst layer: enabling replacements, saving a rule, or retargeting schedules a short burst of reapply passes at 50/120/250/500/900ms. This suppresses immediate redraws from dynamic applets such as media controls and volume.
 - Idle behavior: when there are no replacement rules and no live replacement records, the polling tick exits before scanning the tray tree.
+- Diagnostics: when logging is enabled, KTrayMorph logs observed changes to replacement applets' `applet.plasmoid.icon` and direct visual `source` values. This is used to investigate whether dynamic applets expose their intended native icon while overrides are active.
 
 The current implementation is still a prototype because it relies on Plasma QML tree inspection for presentation-layer replacement. It is working in the current tested Plasma session, but Plasma-private object structure can change between Plasma versions.
 
@@ -42,6 +45,7 @@ Current behavior:
 - Installs system files through `cmake --install build`.
 - Installs or upgrades the Plasma applet globally through `kpackagetool6 --type Plasma/Applet --global`.
 - Removes user-local applet copies before installing, so stale `~/.local/share/plasma/plasmoids/org.ktraymorph.plasmoid` does not shadow the global install.
+- Requires the Qt 6 5Compat GraphicalEffects QML module (`qt6-5compat` on Arch/CachyOS) for color tint rendering.
 - Restarts Plasma after install.
 
 Normal local install:
@@ -140,6 +144,7 @@ Current replacement types:
 
 - `themeIcon`
 - `localFile`
+- `colorTint`: recolor the current native icon through KTrayMorph's overlay instead of choosing a replacement icon.
 
 Compatibility:
 
@@ -154,20 +159,21 @@ Current intended lifecycle:
 - Live visual overrides exist only while the KTrayMorph widget is active.
 - When a rule is saved, KTrayMorph immediately applies the live replacement to the current tray delegate.
 - On startup, tray reload, or new SNI registration, persisted rules are re-applied to matching live tray delegates.
-- When the widget is destroyed or removed from the panel, `restoreAllLiveReplacements()` restores captured original icons and clears only the live replacement records.
+- When the widget is disabled, destroyed, or removed from the panel, `LiveReplacementController::restoreAll()` removes live overlays and clears only the live replacement records.
 - Removing the widget does not delete `rules.json`.
 
 Restore behavior:
 
-- Internal Plasma applets restore from the captured original QML icon source.
-- Named SNI icons restore from the original `IconName`.
-- Pixmap-only SNI icons restore from a fresh `QIcon` generated from current SNI pixmap data.
+- Restore removes KTrayMorph's overlay and reveals the native tray icon item.
+- Internal Plasma applets keep their native icon binding alive underneath the overlay, so media play/pause/stop and volume level state restore to the current native state.
+- Named SNI icons keep their native visual source underneath the overlay.
+- Pixmap-only SNI icons keep their native visual pixmap underneath the overlay.
 
 Guardrails:
 
-- KTrayMorph refuses to capture a replacement as the original.
-- Existing live replacements are re-targeted by stable id and reasserted even when the tray applet changes its state icon.
-- The broad `applet.plasmoid.icon` fallback is not used because it can affect multiple icons of the same applet type.
+- KTrayMorph does not write replacement values into the native icon's `source` property.
+- Existing live overlays are re-targeted by stable id and reasserted even when the tray applet changes its state icon.
+- Overlay items are destroyed on restore, retarget, target destruction, widget teardown, and rule deletion to avoid stale visual overlays.
 
 ### UI
 
@@ -185,10 +191,15 @@ Current behavior:
 - Shows title, item kind, stable id, status, pixmap hash prefix, and replacement icon name.
 - Lets the user type a replacement theme icon name.
 - Lets the user choose a custom local SVG/PNG icon file.
+- Lets the user choose a tint color instead of a replacement icon.
+- Color tint is limited to named/theme icons; pixmap-only SNI icons should use theme icon or local file replacement.
 - Lets the user create/update a replacement rule per row.
 - Lets the user undo one replacement rule per row.
 - Lets the user clear all rules.
 - Lets the user refresh discovery.
+- Disables the main applet UI when replacements are globally inactive.
+- Provides an applet context-menu action to enable or disable all replacements without opening the configuration page.
+- Uses a desaturated applet icon when replacements are inactive.
 - Uses tooltips for icon/action buttons.
 - Uses wider default geometry to avoid a collapsed narrow popup after removing and re-adding the widget.
 
@@ -222,6 +233,7 @@ Current behavior:
 - Provides a log file path field.
 - Provides a `Choose...` file picker button.
 - Default log path is `/tmp/ktraymorph.log`.
+- Provides an `Active` checkbox. When inactive, live overrides are restored, polling stops, and rules remain saved for later reactivation.
 - Provides a polling interval field in milliseconds.
 - Default polling interval is `850`.
 

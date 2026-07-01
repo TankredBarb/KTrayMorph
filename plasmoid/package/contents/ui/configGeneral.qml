@@ -9,12 +9,20 @@ import org.kde.kirigami as Kirigami
 KCM.SimpleKCM {
     id: root
 
+    property alias cfg_active: active.checked
     property alias cfg_enableLogging: enableLogging.checked
     property alias cfg_logFilePath: logFilePath.text
     property alias cfg_pollIntervalMs: pollIntervalMs.value
 
     Kirigami.FormLayout {
         anchors.fill: parent
+
+        CheckBox {
+            id: active
+
+            Kirigami.FormData.label: i18n("Replacement:")
+            text: i18n("Active")
+        }
 
         CheckBox {
             id: enableLogging

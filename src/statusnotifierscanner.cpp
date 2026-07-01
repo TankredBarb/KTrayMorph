@@ -127,11 +127,6 @@ QImage pixmapToImage(const QVariant &value, const QString &logPrefix)
         payload = payload.value<QDBusVariant>().variant();
     }
 
-    debugLog(QStringLiteral("%1: payload type=%2 canConvertArg=%3")
-                 .arg(logPrefix,
-                      QString::fromLatin1(payload.typeName()),
-                      payload.canConvert<QDBusArgument>() ? QStringLiteral("true") : QStringLiteral("false")));
-
     if (!payload.canConvert<QDBusArgument>()) {
         debugLog(QStringLiteral("%1: not QDBusArgument, type=%2").arg(logPrefix, QString::fromLatin1(payload.typeName())));
         return {};
@@ -238,19 +233,7 @@ QVariantMap statusNotifierProperties(const QString &service, const QString &path
         return {};
     }
 
-    const QVariantMap values = reply.value();
-    QStringList keys;
-    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
-        keys << it.key();
-    }
-    debugLog(QStringLiteral("%1: %2 %3 keys=%4 IconName=%5 IconPixmap type=%6")
-                 .arg(logPrefix,
-                      service,
-                      path,
-                      keys.join(QLatin1Char(',')),
-                      values.value(QStringLiteral("IconName")).toString(),
-                      QString::fromLatin1(values.value(QStringLiteral("IconPixmap")).typeName())));
-    return values;
+    return reply.value();
 }
 
 }
@@ -266,7 +249,6 @@ StatusNotifierScanner::StatusNotifierScanner(QObject *parent)
 
 QVector<TrayItem> StatusNotifierScanner::scan()
 {
-    debugLog(QStringLiteral("StatusNotifierScanner::scan starting"));
     QDBusInterface watcher(QString::fromLatin1(watcherService),
                            QString::fromLatin1(watcherPath),
                            QString::fromLatin1(watcherInterface),
@@ -293,27 +275,19 @@ QVector<TrayItem> StatusNotifierScanner::scan()
         items.push_back(std::move(item));
     }
 
-    debugLog(QStringLiteral("StatusNotifierScanner::scan completed registered=%1 usable=%2")
-                 .arg(registeredItems.size())
-                 .arg(items.size()));
     return items;
 }
 
 QString StatusNotifierScanner::iconDataUrlForServicePath(const QString &service, const QString &path) const
 {
     const QVariantMap values = statusNotifierProperties(service, path, QStringLiteral("iconDataUrl"));
-    const QString result = pixmapToDataUrl(values.value(QStringLiteral("IconPixmap")));
-    debugLog(QStringLiteral("iconDataUrl: %1 %2 result length=%3").arg(service, path).arg(result.length()));
-    return result;
+    return pixmapToDataUrl(values.value(QStringLiteral("IconPixmap")));
 }
 
 QVariant StatusNotifierScanner::iconForServicePath(const QString &service, const QString &path) const
 {
     const QVariantMap values = statusNotifierProperties(service, path, QStringLiteral("iconForServicePath"));
-    const QVariant result = pixmapToIcon(values.value(QStringLiteral("IconPixmap")));
-    debugLog(QStringLiteral("iconForServicePath: %1 %2 result type=%3")
-                 .arg(service, path, QString::fromLatin1(result.typeName())));
-    return result;
+    return pixmapToIcon(values.value(QStringLiteral("IconPixmap")));
 }
 
 void StatusNotifierScanner::onStatusNotifierChanged(const QString &serviceAndPath)
@@ -364,8 +338,6 @@ void StatusNotifierScanner::connectItemSignals(const TrayItem &item)
     bus.connect(item.service, item.path, QString::fromLatin1(itemInterface), QStringLiteral("NewOverlayIcon"), this, SLOT(onItemIconChanged()));
     bus.connect(item.service, item.path, QString::fromLatin1(itemInterface), QStringLiteral("NewStatus"), this, SLOT(onItemStatusChanged(QString)));
 
-    debugLog(QStringLiteral("StatusNotifierScanner connected item stableId=%1 service=%2 path=%3")
-                 .arg(item.stableId, item.service, item.path));
     m_connectedItems.insert(servicePath);
 }
 
@@ -407,16 +379,6 @@ TrayItem StatusNotifierScanner::readStatusNotifierItem(const QString &serviceAnd
     if (item.title.isEmpty()) {
         item.title = item.stableId;
     }
-
-    debugLog(QStringLiteral("StatusNotifierScanner read item stableId=%1 title=%2 iconName=%3 hasPixmap=%4 hash=%5 status=%6 service=%7 path=%8")
-                 .arg(item.stableId,
-                      item.title,
-                      item.iconName,
-                      item.hasPixmapIcon ? QStringLiteral("true") : QStringLiteral("false"),
-                      item.iconHash.left(12),
-                      item.status,
-                      item.service,
-                      item.path));
 
     return item;
 }

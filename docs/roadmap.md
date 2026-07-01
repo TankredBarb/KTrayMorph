@@ -139,11 +139,13 @@ Supported replacement types:
 
 - `themeIcon`
 - `localFile`
+- `colorTint`
 
 Current prototype status:
 
 - `themeIcon` is implemented as the current replacement value behavior.
 - `localFile` has a first-pass implementation for SVG/PNG paths.
+- `colorTint` is implemented as an overlay tint mode that recolors the current native icon instead of replacing it with another icon.
 - Existing rules without `replacementType` are interpreted as `themeIcon`.
 
 Rule behavior:
@@ -353,7 +355,8 @@ Current status:
 - Local SVG/PNG file selection is implemented as a header action next to icon search.
 - Per-row create/update and undo are implemented.
 - Clear-all and refresh are implemented.
-- Standard Plasma `Configure KTrayMorph` integration exists for logging and polling settings.
+- Standard Plasma `Configure KTrayMorph` integration exists for active, logging, and polling settings.
+- A context-menu action can enable or disable all replacements quickly.
 - A full rules editor is not implemented yet.
 - Missing-file repair UI is not implemented yet.
 
@@ -401,6 +404,47 @@ Verification:
 - missing local files produce a clear UI state instead of a broken replacement;
 - removing the widget restores original icons;
 - reboot/login keeps the rule and re-applies it while the widget is active.
+
+## Phase 7.2: Color Tint Rules
+
+Goal: allow a rule to recolor the current tray icon instead of replacing it with a theme icon or local file.
+
+Current status: first-pass color selection and live tint overlays are implemented.
+
+Concept:
+
+- The user can choose a color as the replacement action for a matched tray item.
+- The rule keeps matching exactly like existing replacement rules.
+- The live overlay still owns the visual change, so KTrayMorph does not mutate the original Plasma/SNI icon binding.
+- Restore behavior is the same as icon replacement: disabling a rule, disabling KTrayMorph, clearing rules, or removing the widget removes the overlay and reveals the native icon in its current state.
+- This is especially useful for dynamic tray applets such as media controls and volume, where the original icon can keep changing underneath the tinted overlay.
+
+Rule shape:
+
+```json
+{
+  "enabled": true,
+  "matchType": "stableId",
+  "matchValue": "org.kde.plasma.volume",
+  "replacementType": "colorTint",
+  "replacementValue": "#e85d75"
+}
+```
+
+Implementation notes:
+
+- Uses `Qt5Compat.GraphicalEffects.ColorOverlay`; runtime package is `qt6-5compat` on Arch/CachyOS.
+- The tint is applied to KTrayMorph's overlay item, not to the native tray icon.
+- Named/theme icons tint cleanly. Pixmap-only SNI icons are intentionally excluded from color tint and should use theme/local file replacement instead.
+- The UI treats color selection as another replacement mode next to theme icon and local file.
+
+Verification:
+
+- a user can select a color for a Plasma internal applet;
+- a user can select a color for a StatusNotifierItem;
+- media/volume state changes keep being suppressed while the tint rule is active;
+- disabling/removing the rule restores the current native icon state, not a stale captured state;
+- clearing all rules and removing the widget remove all tint overlays.
 
 ## Phase 8: Performance Pass
 
@@ -502,6 +546,7 @@ Milestone scope:
 
 1. Add a small rules editor for existing saved rules.
 2. Add editing support for switching an existing rule between `themeIcon` and `localFile`.
-3. Add a repair flow for missing local files.
-4. Add uninstall documentation.
-5. Add focused tests for rule matching, schema compatibility, and icon hashing.
+3. Polish `colorTint` replacement rules after real-world testing with symbolic and full-color tray icons.
+4. Add a repair flow for missing local files.
+5. Add uninstall documentation.
+6. Add focused tests for rule matching, schema compatibility, and icon hashing.

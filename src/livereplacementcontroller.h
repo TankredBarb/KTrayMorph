@@ -15,6 +15,7 @@ class LiveReplacementController : public QObject
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(TrayItemModel *trayModel READ trayModel WRITE setTrayModel NOTIFY trayModelChanged)
+    Q_PROPERTY(QObject *rootQmlObject READ rootQmlObject WRITE setRootQmlObject NOTIFY rootQmlObjectChanged)
 
 public:
     explicit LiveReplacementController(QObject *parent = nullptr);
@@ -22,12 +23,13 @@ public:
     TrayItemModel *trayModel() const;
     void setTrayModel(TrayItemModel *model);
 
+    QObject *rootQmlObject() const;
+    void setRootQmlObject(QObject *object);
+
     Q_INVOKABLE bool registerReplacement(const QString &stableId, QObject *target,
-                                         const QString &originalSource,
                                          const QString &replacementSource,
                                          const QString &replacementType,
                                          const QString &replacementValue,
-                                         const QString &restoreFallback,
                                          bool isStatusNotifier,
                                          const QString &service,
                                          const QString &path);
@@ -49,38 +51,36 @@ Q_SIGNALS:
     void needsRetarget(const QString &stableId);
     void recordsChanged();
     void trayModelChanged();
-
-private Q_SLOTS:
-    void onSourceChangedByTarget();
+    void rootQmlObjectChanged();
 
 private:
     struct Record
     {
         QString stableId;
         QPointer<QObject> target;
+        QPointer<QObject> overlay;
         QString originalSource;
         QString replacementSource;
         QString replacementType;
         QString replacementValue;
-        QString restoreFallback;
         bool isStatusNotifier = false;
         QString service;
         QString path;
-        QMetaObject::Connection notifyConnection;
-        QMetaObject::Connection destroyedConnection;
-        bool hasNotifyGuard = false;
+        QMetaObject::Connection targetDestroyedConnection;
     };
 
-    QVariant resolveRestoreValue(const Record &record) const;
-    void installNotifyGuard(Record &record);
-    void disconnectGuard(Record &record);
-    void reassertOne(const QString &stableId, bool fromNotify);
+    QObject *createOverlay(QObject *target, const QString &source);
+    bool configureOverlay(Record &record);
+    QString overlaySourceForRecord(const Record &record) const;
+    bool destroyOverlay(QObject *overlay);
+    void disconnectTargetGuard(Record &record);
+    static bool isColorTint(const Record &record);
     static QVariant targetSourceValue(QObject *target);
-    static bool setTargetSource(QObject *target, const QVariant &value);
     static QString sourceText(const QVariant &value);
     static QString clippedSource(const QString &text);
+    static QString objectSummary(QObject *object);
 
     QHash<QString, Record> m_records;
-    QHash<QObject *, QString> m_targetIndex;
     TrayItemModel *m_trayModel = nullptr;
+    QPointer<QObject> m_rootQmlObject;
 };

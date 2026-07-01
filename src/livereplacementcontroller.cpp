@@ -1,7 +1,6 @@
 #include "livereplacementcontroller.h"
 #include "logging.h"
 
-#include <QMetaMethod>
 #include <QMetaProperty>
 
 LiveReplacementController::LiveReplacementController(QObject *parent)
@@ -23,20 +22,26 @@ void LiveReplacementController::setTrayModel(TrayItemModel *model)
     Q_EMIT trayModelChanged();
 }
 
+QObject *LiveReplacementController::rootQmlObject() const
+{
+    return m_rootQmlObject;
+}
+
+void LiveReplacementController::setRootQmlObject(QObject *object)
+{
+    if (m_rootQmlObject == object) {
+        return;
+    }
+    m_rootQmlObject = object;
+    Q_EMIT rootQmlObjectChanged();
+}
+
 QVariant LiveReplacementController::targetSourceValue(QObject *target)
 {
     if (!target) {
         return {};
     }
     return target->property("source");
-}
-
-bool LiveReplacementController::setTargetSource(QObject *target, const QVariant &value)
-{
-    if (!target) {
-        return false;
-    }
-    return target->setProperty("source", value);
 }
 
 QString LiveReplacementController::sourceText(const QVariant &value)
@@ -58,185 +63,216 @@ QString LiveReplacementController::clippedSource(const QString &text)
     return text.left(120) + QStringLiteral("...(") + QString::number(text.length()) + QStringLiteral(")");
 }
 
-void LiveReplacementController::installNotifyGuard(Record &record)
+QString LiveReplacementController::objectSummary(QObject *object)
 {
-    if (!record.target) {
-        return;
+    if (!object) {
+        return QStringLiteral("null");
     }
 
-    const QMetaObject *meta = record.target->metaObject();
-    const int idx = meta ? meta->indexOfProperty("source") : -1;
-    if (idx < 0) {
-        Q_EMIT debugLog(QStringLiteral("notifyGuard: no 'source' property on target stableId=%1").arg(record.stableId));
-        return;
+    const QStringList interestingProperties = {
+        QStringLiteral("objectName"),
+        QStringLiteral("source"),
+        QStringLiteral("replacementType"),
+        QStringLiteral("replacementValue"),
+        QStringLiteral("tintLayerEnabled"),
+        QStringLiteral("tintColor"),
+        QStringLiteral("tintRenderer"),
+        QStringLiteral("visible"),
+        QStringLiteral("opacity"),
+        QStringLiteral("width"),
+        QStringLiteral("height"),
+        QStringLiteral("z"),
+    };
+
+    QStringList details;
+    details << QString::fromLatin1(object->metaObject()->className());
+    for (const QString &propertyName : interestingProperties) {
+        const QByteArray propertyNameBytes = propertyName.toLatin1();
+        const QVariant value = object->property(propertyNameBytes.constData());
+        if (value.isValid()) {
+            details << QStringLiteral("%1=%2").arg(propertyName, clippedSource(sourceText(value)));
+        }
     }
 
-    const QMetaProperty prop = meta->property(idx);
-    if (!prop.hasNotifySignal()) {
-        Q_EMIT debugLog(QStringLiteral("notifyGuard: 'source' has no notify signal stableId=%1").arg(record.stableId));
-        return;
-    }
-
-    const QMetaMethod notify = prop.notifySignal();
-    const int slotIndex = metaObject()->indexOfSlot("onSourceChangedByTarget()");
-    if (slotIndex < 0) {
-        Q_EMIT debugLog(QStringLiteral("notifyGuard: controller slot not found stableId=%1").arg(record.stableId));
-        return;
-    }
-
-    const QMetaMethod slot = metaObject()->method(slotIndex);
-    const QString stableId = record.stableId;
-    record.notifyConnection = QObject::connect(record.target, notify, this, slot, Qt::DirectConnection);
-
-    record.destroyedConnection = QObject::connect(
-        record.target, &QObject::destroyed, this, [this, stableId]() {
-            auto it = m_records.find(stableId);
-            if (it == m_records.end()) {
-                return;
-            }
-            QObject *rawTarget = it.value().target.data();
-            it.value().target.clear();
-            it.value().notifyConnection = {};
-            it.value().destroyedConnection = {};
-            it.value().hasNotifyGuard = false;
-            const bool isSni = it.value().isStatusNotifier;
-            if (rawTarget) {
-                m_targetIndex.remove(rawTarget);
-            }
-            m_records.erase(it);
-            Q_EMIT debugLog(QStringLiteral("notifyGuard: target destroyed stableId=%1 isSNI=%2, retargeting")
-                                .arg(stableId, isSni ? QStringLiteral("true") : QStringLiteral("false")));
-            Q_EMIT needsRetarget(stableId);
-            Q_EMIT recordsChanged();
-        });
-
-    record.hasNotifyGuard = record.notifyConnection;
-    Q_EMIT debugLog(QStringLiteral("notifyGuard installed stableId=%1 hasNotify=%2")
-                        .arg(record.stableId, record.hasNotifyGuard ? QStringLiteral("true") : QStringLiteral("false")));
+    return details.join(QLatin1Char(' '));
 }
 
-void LiveReplacementController::onSourceChangedByTarget()
+bool LiveReplacementController::isColorTint(const Record &record)
 {
-    auto *target = qobject_cast<QObject *>(sender());
+    return record.replacementType == QStringLiteral("colorTint");
+}
+
+QString LiveReplacementController::overlaySourceForRecord(const Record &record) const
+{
+    return record.replacementSource;
+}
+
+bool LiveReplacementController::configureOverlay(Record &record)
+{
+    if (record.overlay.isNull()) {
+        return false;
+    }
+
+    const QString source = overlaySourceForRecord(record);
+    if (source.isEmpty()) {
+        return false;
+    }
+
+    bool changed = false;
+    if (record.overlay->property("source").toString() != source) {
+        record.overlay->setProperty("source", source);
+        changed = true;
+    }
+    if (record.overlay->property("replacementType").toString() != record.replacementType) {
+        record.overlay->setProperty("replacementType", record.replacementType);
+        changed = true;
+    }
+    if (record.overlay->property("replacementValue").toString() != record.replacementValue) {
+        record.overlay->setProperty("replacementValue", record.replacementValue);
+        changed = true;
+    }
+    if (changed && isColorTint(record)) {
+        Q_EMIT debugLog(QStringLiteral("configureOverlay colorTint stableId=%1 changed=%2 overlay=[%3] target=[%4]")
+                            .arg(record.stableId,
+                                 changed ? QStringLiteral("true") : QStringLiteral("false"),
+                                 objectSummary(record.overlay),
+                                 objectSummary(record.target)));
+    }
+    return changed;
+}
+
+QObject *LiveReplacementController::createOverlay(QObject *target, const QString &source)
+{
     if (!target) {
-        return;
+        Q_EMIT debugLog(QStringLiteral("createOverlay: null target"));
+        return nullptr;
+    }
+    if (!m_rootQmlObject) {
+        Q_EMIT debugLog(QStringLiteral("createOverlay: no rootQmlObject wired"));
+        return nullptr;
+    }
+    if (source.isEmpty()) {
+        Q_EMIT debugLog(QStringLiteral("createOverlay: empty source"));
+        return nullptr;
     }
 
-    auto idxIt = m_targetIndex.constFind(target);
-    if (idxIt == m_targetIndex.constEnd()) {
-        return;
+    QVariant result;
+    const bool ok = QMetaObject::invokeMethod(m_rootQmlObject.data(),
+                                              "createIconOverlay",
+                                              Qt::DirectConnection,
+                                              Q_RETURN_ARG(QVariant, result),
+                                              Q_ARG(QVariant, QVariant::fromValue(target)),
+                                              Q_ARG(QVariant, QVariant::fromValue(source)));
+    if (!ok) {
+        Q_EMIT debugLog(QStringLiteral("createOverlay: invokeMethod failed"));
+        return nullptr;
     }
-    reassertOne(idxIt.value(), true);
+
+    QObject *overlay = result.value<QObject *>();
+    if (!overlay) {
+        Q_EMIT debugLog(QStringLiteral("createOverlay: QML returned null overlay"));
+        return nullptr;
+    }
+
+    Q_EMIT debugLog(QStringLiteral("createOverlay OK target=[%1] overlay=[%2] source=[%3]")
+                        .arg(objectSummary(target),
+                             objectSummary(overlay),
+                             clippedSource(source)));
+    return overlay;
 }
 
-void LiveReplacementController::disconnectGuard(Record &record)
+bool LiveReplacementController::destroyOverlay(QObject *overlay)
 {
-    if (record.notifyConnection) {
-        QObject::disconnect(record.notifyConnection);
-        record.notifyConnection = {};
+    if (!overlay) {
+        return false;
     }
-    if (record.destroyedConnection) {
-        QObject::disconnect(record.destroyedConnection);
-        record.destroyedConnection = {};
+    if (!m_rootQmlObject) {
+        overlay->deleteLater();
+        return true;
     }
-    record.hasNotifyGuard = false;
+
+    QVariant result;
+    const bool ok = QMetaObject::invokeMethod(m_rootQmlObject.data(),
+                                              "destroyIconOverlay",
+                                              Qt::DirectConnection,
+                                              Q_RETURN_ARG(QVariant, result),
+                                              Q_ARG(QVariant, QVariant::fromValue(overlay)));
+    if (!ok) {
+        overlay->deleteLater();
+        return false;
+    }
+    return result.toBool();
 }
 
-void LiveReplacementController::reassertOne(const QString &stableId, bool fromNotify)
+void LiveReplacementController::disconnectTargetGuard(Record &record)
 {
-    auto it = m_records.find(stableId);
-    if (it == m_records.end()) {
-        if (fromNotify) {
-            Q_EMIT debugLog(QStringLiteral("reassertOne (notify) stableId=%1 no record").arg(stableId));
-        }
-        return;
+    if (record.targetDestroyedConnection) {
+        QObject::disconnect(record.targetDestroyedConnection);
+        record.targetDestroyedConnection = {};
     }
-
-    Record &record = it.value();
-    if (record.target.isNull()) {
-        if (fromNotify) {
-            Q_EMIT debugLog(QStringLiteral("reassertOne (notify) stableId=%1 target gone").arg(stableId));
-        }
-        return;
-    }
-
-    const QString currentText = sourceText(targetSourceValue(record.target));
-    if (currentText == record.replacementSource) {
-        return;
-    }
-
-    Q_EMIT debugLog(QStringLiteral("reassertOne (notify=%1) stableId=%2 drifted=[%3] -> [%4]")
-                        .arg(fromNotify ? QStringLiteral("true") : QStringLiteral("false"),
-                             stableId, clippedSource(currentText), clippedSource(record.replacementSource)));
-
-    if (!setTargetSource(record.target, record.replacementSource)) {
-        Q_EMIT debugLog(QStringLiteral("reassertOne: setProperty(source) failed stableId=%1").arg(stableId));
-    }
-}
-
-QVariant LiveReplacementController::resolveRestoreValue(const Record &record) const
-{
-    if (record.isStatusNotifier) {
-        if (!record.restoreFallback.isEmpty()) {
-            return record.restoreFallback;
-        }
-        if (m_trayModel) {
-            return m_trayModel->iconForStableId(record.stableId);
-        }
-        return {};
-    }
-
-    if (!record.originalSource.isEmpty()) {
-        return record.originalSource;
-    }
-    return record.restoreFallback;
 }
 
 bool LiveReplacementController::registerReplacement(const QString &stableId, QObject *target,
-                                                    const QString &originalSource,
                                                     const QString &replacementSource,
                                                     const QString &replacementType,
                                                     const QString &replacementValue,
-                                                    const QString &restoreFallback,
                                                     bool isStatusNotifier,
                                                     const QString &service,
                                                     const QString &path)
 {
-    if (stableId.isEmpty() || replacementSource.isEmpty() || !target) {
-        Q_EMIT debugLog(QStringLiteral("registerReplacement refused: empty id/replacement/null target"));
+    if (stableId.isEmpty() || !target || replacementSource.isEmpty()) {
+        Q_EMIT debugLog(QStringLiteral("registerReplacement refused: empty id/source/null target"));
         return false;
     }
 
-    const QString currentText = sourceText(targetSourceValue(target));
-    if (currentText == replacementSource) {
-        Q_EMIT debugLog(QStringLiteral("registerReplacement refused: would capture replacement as original stableId=%1").arg(stableId));
-        return false;
+    if (m_records.contains(stableId)) {
+        return updateReplacement(stableId, replacementType, replacementValue, replacementSource);
     }
 
     Record record;
     record.stableId = stableId;
     record.target = target;
-    record.originalSource = originalSource.isEmpty() ? currentText : originalSource;
+    record.originalSource = sourceText(targetSourceValue(target));
     record.replacementSource = replacementSource;
     record.replacementType = replacementType;
     record.replacementValue = replacementValue;
-    record.restoreFallback = restoreFallback;
     record.isStatusNotifier = isStatusNotifier;
     record.service = service;
     record.path = path;
 
-    m_records.insert(stableId, record);
-    m_targetIndex.insert(target, stableId);
-
-    if (!setTargetSource(target, replacementSource)) {
-        Q_EMIT debugLog(QStringLiteral("registerReplacement: setProperty(source) failed stableId=%1").arg(stableId));
+    QObject *overlay = createOverlay(target, overlaySourceForRecord(record));
+    if (!overlay) {
+        Q_EMIT debugLog(QStringLiteral("registerReplacement: overlay creation failed stableId=%1").arg(stableId));
         return false;
     }
+    record.overlay = overlay;
+    configureOverlay(record);
 
-    installNotifyGuard(m_records[stableId]);
+    const QString capturedStableId = stableId;
+    record.targetDestroyedConnection = QObject::connect(
+        target, &QObject::destroyed, this, [this, capturedStableId]() {
+            auto it = m_records.find(capturedStableId);
+            if (it == m_records.end()) {
+                return;
+            }
+            if (it.value().overlay) {
+                destroyOverlay(it.value().overlay);
+            }
+            it.value().target.clear();
+            it.value().overlay.clear();
+            it.value().targetDestroyedConnection = {};
+            Q_EMIT debugLog(QStringLiteral("target destroyed stableId=%1, requesting retarget").arg(capturedStableId));
+            Q_EMIT needsRetarget(capturedStableId);
+            Q_EMIT recordsChanged();
+        });
 
-    Q_EMIT debugLog(QStringLiteral("registerReplacement OK stableId=%1 original=[%2] -> replacement=[%3] isSNI=%4")
-                        .arg(stableId, clippedSource(record.originalSource), clippedSource(replacementSource),
+    m_records.insert(stableId, record);
+
+    Q_EMIT debugLog(QStringLiteral("registerReplacement OK stableId=%1 original=[%2] overlay source=[%3] type=%4 isSNI=%5")
+                        .arg(stableId,
+                             clippedSource(record.originalSource),
+                             clippedSource(overlaySourceForRecord(record)),
+                             record.replacementType,
                              isStatusNotifier ? QStringLiteral("true") : QStringLiteral("false")));
     Q_EMIT recordsChanged();
     return true;
@@ -253,29 +289,40 @@ bool LiveReplacementController::updateReplacement(const QString &stableId,
         return false;
     }
 
-    if (it.value().target.isNull()) {
+    Record &record = it.value();
+    if (record.target.isNull()) {
         Q_EMIT debugLog(QStringLiteral("updateReplacement: target gone, dropping record %1").arg(stableId));
+        disconnectTargetGuard(record);
+        if (record.overlay) {
+            destroyOverlay(record.overlay);
+            record.overlay = nullptr;
+        }
         m_records.erase(it);
         Q_EMIT recordsChanged();
         return false;
     }
 
-    Record &record = it.value();
     record.replacementType = replacementType;
     record.replacementValue = replacementValue;
     record.replacementSource = replacementSource;
-    // notify guard keeps watching the same target; only the value changed.
-    if (!record.hasNotifyGuard) {
-        installNotifyGuard(record);
+
+    if (record.overlay.isNull()) {
+        QObject *newOverlay = createOverlay(record.target, overlaySourceForRecord(record));
+        if (!newOverlay) {
+            Q_EMIT debugLog(QStringLiteral("updateReplacement: overlay recreation failed stableId=%1").arg(stableId));
+            return false;
+        }
+        record.overlay = newOverlay;
+        configureOverlay(record);
+        Q_EMIT debugLog(QStringLiteral("updateReplacement: overlay recreated stableId=%1 source=[%2]")
+                            .arg(stableId, clippedSource(overlaySourceForRecord(record))));
+        return true;
     }
 
-    if (!setTargetSource(record.target, replacementSource)) {
-        Q_EMIT debugLog(QStringLiteral("updateReplacement: setProperty(source) failed stableId=%1").arg(stableId));
-        return false;
+    if (configureOverlay(record)) {
+        Q_EMIT debugLog(QStringLiteral("updateReplacement OK stableId=%1 overlay source=[%2]")
+                            .arg(stableId, clippedSource(overlaySourceForRecord(record))));
     }
-
-    Q_EMIT debugLog(QStringLiteral("updateReplacement OK stableId=%1 replacementSource=[%2]")
-                        .arg(stableId, clippedSource(replacementSource)));
     return true;
 }
 
@@ -289,29 +336,37 @@ int LiveReplacementController::reassertAll()
 
         if (record.target.isNull()) {
             Q_EMIT debugLog(QStringLiteral("reassert stableId=%1 target gone, scheduling retarget").arg(record.stableId));
-            disconnectGuard(record);
+            disconnectTargetGuard(record);
+            if (record.overlay) {
+                destroyOverlay(record.overlay);
+            }
+            record.overlay = nullptr;
             retargets << record.stableId;
             it = m_records.erase(it);
             continue;
         }
 
-        if (!record.hasNotifyGuard) {
-            installNotifyGuard(record);
-        }
-
-        const QString currentText = sourceText(targetSourceValue(record.target));
-        if (currentText == record.replacementSource) {
+        if (record.overlay.isNull()) {
+            QObject *newOverlay = createOverlay(record.target, overlaySourceForRecord(record));
+            if (!newOverlay) {
+                Q_EMIT debugLog(QStringLiteral("reassert stableId=%1 overlay recreation failed").arg(record.stableId));
+                ++it;
+                continue;
+            }
+            record.overlay = newOverlay;
+            configureOverlay(record);
+            ++reasserted;
             ++it;
             continue;
         }
 
-        Q_EMIT debugLog(QStringLiteral("reassert stableId=%1 drifted=[%2] -> [%3]")
-                            .arg(record.stableId, clippedSource(currentText), clippedSource(record.replacementSource)));
-
-        if (!setTargetSource(record.target, record.replacementSource)) {
-            Q_EMIT debugLog(QStringLiteral("reassert: setProperty(source) failed stableId=%1").arg(record.stableId));
+        if (record.target->property("opacity").toDouble() != 0.0) {
+            record.target->setProperty("opacity", 0.0);
         }
-        reasserted += 1;
+
+        if (configureOverlay(record)) {
+            ++reasserted;
+        }
         ++it;
     }
 
@@ -333,17 +388,48 @@ bool LiveReplacementController::retarget(const QString &stableId, QObject *newTa
         return false;
     }
 
-    if (it.value().target) {
-        m_targetIndex.remove(it.value().target.data());
+    Record &record = it.value();
+    if (record.target == newTarget) {
+        return true;
     }
-    disconnectGuard(it.value());
-    it.value().target = newTarget;
-    m_targetIndex.insert(newTarget, stableId);
-    installNotifyGuard(it.value());
-    const bool ok = setTargetSource(newTarget, it.value().replacementSource);
-    Q_EMIT debugLog(QStringLiteral("retarget stableId=%1 ok=%2")
-                        .arg(stableId, ok ? QStringLiteral("true") : QStringLiteral("false")));
-    return ok;
+
+    disconnectTargetGuard(record);
+
+    if (record.overlay) {
+        destroyOverlay(record.overlay);
+        record.overlay = nullptr;
+    }
+
+    record.target = newTarget;
+
+    QObject *overlay = createOverlay(newTarget, overlaySourceForRecord(record));
+    if (!overlay) {
+        Q_EMIT debugLog(QStringLiteral("retarget stableId=%1 overlay creation failed").arg(stableId));
+        return false;
+    }
+    record.overlay = overlay;
+    configureOverlay(record);
+
+    const QString capturedStableId = stableId;
+    record.targetDestroyedConnection = QObject::connect(
+        newTarget, &QObject::destroyed, this, [this, capturedStableId]() {
+            auto it = m_records.find(capturedStableId);
+            if (it == m_records.end()) {
+                return;
+            }
+            if (it.value().overlay) {
+                destroyOverlay(it.value().overlay);
+            }
+            it.value().target.clear();
+            it.value().overlay.clear();
+            it.value().targetDestroyedConnection = {};
+            Q_EMIT debugLog(QStringLiteral("retarget target destroyed stableId=%1").arg(capturedStableId));
+            Q_EMIT needsRetarget(capturedStableId);
+            Q_EMIT recordsChanged();
+        });
+
+    Q_EMIT debugLog(QStringLiteral("retarget OK stableId=%1").arg(stableId));
+    return true;
 }
 
 bool LiveReplacementController::restore(const QString &stableId)
@@ -354,25 +440,18 @@ bool LiveReplacementController::restore(const QString &stableId)
         return false;
     }
 
-    const Record record = it.value();
-    const QVariant restoreValue = resolveRestoreValue(record);
-
-    disconnectGuard(it.value());
+    Record record = it.value();
+    disconnectTargetGuard(it.value());
 
     bool ok = false;
-    if (!record.target.isNull() && restoreValue.isValid()) {
-        ok = setTargetSource(record.target, restoreValue);
-        Q_EMIT debugLog(QStringLiteral("restore stableId=%1 ok=%2 value=[%3]")
-                            .arg(stableId, ok ? QStringLiteral("true") : QStringLiteral("false"),
-                                 clippedSource(sourceText(restoreValue))));
+    if (record.overlay) {
+        ok = destroyOverlay(record.overlay);
+        Q_EMIT debugLog(QStringLiteral("restore stableId=%1 overlay destroyed ok=%2")
+                            .arg(stableId, ok ? QStringLiteral("true") : QStringLiteral("false")));
     } else {
-        Q_EMIT debugLog(QStringLiteral("restore stableId=%1 no target/restore value, cleared").arg(stableId));
+        Q_EMIT debugLog(QStringLiteral("restore stableId=%1 no overlay; nothing to remove").arg(stableId));
     }
 
-    disconnectGuard(it.value());
-    if (it.value().target) {
-        m_targetIndex.remove(it.value().target.data());
-    }
     m_records.erase(it);
     Q_EMIT recordsChanged();
     return ok;
@@ -382,14 +461,13 @@ void LiveReplacementController::restoreAll()
 {
     for (auto it = m_records.begin(); it != m_records.end(); ++it) {
         Record &record = it.value();
-        disconnectGuard(record);
-        const QVariant restoreValue = resolveRestoreValue(record);
-        if (!record.target.isNull() && restoreValue.isValid()) {
-            setTargetSource(record.target, restoreValue);
+        disconnectTargetGuard(record);
+        if (record.overlay) {
+            destroyOverlay(record.overlay);
+            record.overlay = nullptr;
         }
     }
     m_records.clear();
-    m_targetIndex.clear();
     Q_EMIT debugLog(QStringLiteral("restoreAll cleared"));
     Q_EMIT recordsChanged();
 }
@@ -405,9 +483,10 @@ bool LiveReplacementController::dropRecord(const QString &stableId)
     if (it == m_records.end()) {
         return false;
     }
-    disconnectGuard(it.value());
-    if (it.value().target) {
-        m_targetIndex.remove(it.value().target.data());
+    disconnectTargetGuard(it.value());
+    if (it.value().overlay) {
+        destroyOverlay(it.value().overlay);
+        it.value().overlay = nullptr;
     }
     m_records.erase(it);
     Q_EMIT recordsChanged();

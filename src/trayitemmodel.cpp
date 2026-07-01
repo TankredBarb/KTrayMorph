@@ -335,6 +335,7 @@ void TrayItemModel::rebuildItems()
     m_hasReplacementItems = std::any_of(items.cbegin(), items.cend(), [](const TrayItem &item) {
         return item.hasReplacement && !item.replacementIcon.isEmpty();
     });
+    Q_EMIT itemsAboutToReload();
     beginResetModel();
     m_items = std::move(items);
     endResetModel();
