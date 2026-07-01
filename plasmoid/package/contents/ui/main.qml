@@ -41,8 +41,14 @@ PlasmoidItem {
     property bool localIconDialogActive: false
     property bool trayPlacementChecked: false
     property bool validTrayPlacement: false
-    readonly property bool replacementsActive: Boolean(Plasmoid.configuration.active ?? true)
-    readonly property int effectivePollIntervalMs: root.normalizedPollIntervalMs(Plasmoid.configuration.pollIntervalMs)
+    property bool appSettingsLoaded: false
+    property bool syncingPlasmaConfiguration: false
+    property bool appSettingsActive: true
+    property bool appSettingsEnableLogging: false
+    property string appSettingsLogFilePath: "/tmp/ktraymorph.log"
+    property int appSettingsPollIntervalMs: 850
+    readonly property bool replacementsActive: appSettingsActive
+    readonly property int effectivePollIntervalMs: root.normalizedPollIntervalMs(appSettingsPollIntervalMs)
 
     onExpandedChanged: {
         if (root.expanded) {
@@ -210,17 +216,82 @@ PlasmoidItem {
 
         text: root.replacementsActive ? "Disable KTrayMorph" : "Enable KTrayMorph"
         icon.name: root.replacementsActive ? "media-playback-pause-symbolic" : "media-playback-start-symbolic"
-        onTriggered: {
-            Plasmoid.configuration.active = !root.replacementsActive;
-            Qt.callLater(root.handleActiveChanged);
-        }
+        onTriggered: root.updateActiveSetting(!root.replacementsActive)
     }
 
     Plasmoid.contextualActions: [toggleActiveAction]
 
+    function configBool(value, fallback) {
+        return value === null || value === undefined ? fallback : Boolean(value);
+    }
+
+    function configString(value, fallback) {
+        const text = value === null || value === undefined ? "" : String(value);
+        return text.length > 0 ? text : fallback;
+    }
+
+    function configInt(value, fallback) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+    }
+
+    function loadAppSettingsFromDisk() {
+        const settings = trayItems.loadAppSettings();
+        const hasPersistedSettings = Boolean(settings.exists);
+
+        appSettingsActive = hasPersistedSettings
+            ? Boolean(settings.active)
+            : root.configBool(Plasmoid.configuration.active, true);
+        appSettingsEnableLogging = hasPersistedSettings
+            ? Boolean(settings.enableLogging)
+            : root.configBool(Plasmoid.configuration.enableLogging, false);
+        appSettingsLogFilePath = hasPersistedSettings
+            ? root.configString(settings.logFilePath, "/tmp/ktraymorph.log")
+            : root.configString(Plasmoid.configuration.logFilePath, "/tmp/ktraymorph.log");
+        appSettingsPollIntervalMs = root.normalizedPollIntervalMs(hasPersistedSettings
+            ? root.configInt(settings.pollIntervalMs, 850)
+            : root.configInt(Plasmoid.configuration.pollIntervalMs, 850));
+
+        appSettingsLoaded = true;
+        root.syncPlasmaConfigurationFromAppSettings();
+        root.saveAppSettingsToDisk();
+    }
+
+    function syncPlasmaConfigurationFromAppSettings() {
+        syncingPlasmaConfiguration = true;
+        Plasmoid.configuration.active = appSettingsActive;
+        Plasmoid.configuration.enableLogging = appSettingsEnableLogging;
+        Plasmoid.configuration.logFilePath = appSettingsLogFilePath;
+        Plasmoid.configuration.pollIntervalMs = appSettingsPollIntervalMs;
+        Qt.callLater(function() {
+            root.syncingPlasmaConfiguration = false;
+        });
+    }
+
+    function saveAppSettingsToDisk() {
+        if (!appSettingsLoaded) {
+            return;
+        }
+        trayItems.saveAppSettings(appSettingsActive,
+                                  appSettingsEnableLogging,
+                                  appSettingsLogFilePath,
+                                  appSettingsPollIntervalMs);
+    }
+
+    function updateActiveSetting(active) {
+        const normalizedActive = Boolean(active);
+        if (appSettingsActive === normalizedActive) {
+            return;
+        }
+
+        appSettingsActive = normalizedActive;
+        root.saveAppSettingsToDisk();
+        root.syncPlasmaConfigurationFromAppSettings();
+        root.handleActiveChanged();
+    }
+
     function configureLoggingFromSettings() {
-        trayItems.configureLogging(Boolean(Plasmoid.configuration.enableLogging),
-                                   String(Plasmoid.configuration.logFilePath ?? ""));
+        trayItems.configureLogging(appSettingsEnableLogging, appSettingsLogFilePath);
     }
 
     function debugLog(message) {
@@ -239,20 +310,40 @@ PlasmoidItem {
         target: Plasmoid.configuration
 
         function onEnableLoggingChanged() {
+            if (!root.appSettingsLoaded || root.syncingPlasmaConfiguration) {
+                return;
+            }
+            root.appSettingsEnableLogging = Boolean(Plasmoid.configuration.enableLogging);
             root.configureLoggingFromSettings();
+            root.saveAppSettingsToDisk();
         }
 
         function onLogFilePathChanged() {
+            if (!root.appSettingsLoaded || root.syncingPlasmaConfiguration) {
+                return;
+            }
+            root.appSettingsLogFilePath = root.configString(Plasmoid.configuration.logFilePath, "/tmp/ktraymorph.log");
             root.configureLoggingFromSettings();
+            root.saveAppSettingsToDisk();
         }
 
         function onPollIntervalMsChanged() {
+            if (!root.appSettingsLoaded || root.syncingPlasmaConfiguration) {
+                return;
+            }
+            root.appSettingsPollIntervalMs = root.normalizedPollIntervalMs(Plasmoid.configuration.pollIntervalMs);
+            root.saveAppSettingsToDisk();
             if (root.replacementsActive) {
                 overridePollTimer.restart();
             }
         }
 
         function onActiveChanged() {
+            if (!root.appSettingsLoaded || root.syncingPlasmaConfiguration) {
+                return;
+            }
+            root.appSettingsActive = Boolean(Plasmoid.configuration.active);
+            root.saveAppSettingsToDisk();
             root.handleActiveChanged();
         }
     }
@@ -1092,6 +1183,7 @@ PlasmoidItem {
     }
 
     Component.onCompleted: {
+        root.loadAppSettingsFromDisk();
         root.configureLoggingFromSettings();
         root.debugLog("=== applet QML loaded ===");
         if (root.replacementsActive) {

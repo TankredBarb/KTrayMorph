@@ -3,9 +3,14 @@
 
 #include <QFileInfo>
 #include <QFutureWatcher>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QDir>
+#include <QSaveFile>
 #include <QSet>
+#include <QStandardPaths>
 #include <QVariantMap>
 
 #include <QtConcurrent>
@@ -81,6 +86,29 @@ QStringList matchingIconNamesForFilter(const QString &filter, int limit)
     }
 
     return matches;
+}
+
+QString appSettingsPath()
+{
+    const QString baseConfigDir = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
+    if (baseConfigDir.isEmpty()) {
+        return {};
+    }
+
+    const QString configDir = QDir(baseConfigDir).filePath(QStringLiteral("ktraymorph"));
+    QDir().mkpath(configDir);
+    return QDir(configDir).filePath(QStringLiteral("settings.json"));
+}
+
+QVariantMap defaultAppSettings(bool exists)
+{
+    QVariantMap settings;
+    settings.insert(QStringLiteral("exists"), exists);
+    settings.insert(QStringLiteral("active"), true);
+    settings.insert(QStringLiteral("enableLogging"), false);
+    settings.insert(QStringLiteral("logFilePath"), QStringLiteral("/tmp/ktraymorph.log"));
+    settings.insert(QStringLiteral("pollIntervalMs"), 850);
+    return settings;
 }
 }
 
@@ -318,6 +346,53 @@ void TrayItemModel::configureLogging(bool enabled, const QString &path)
 void TrayItemModel::debugLog(const QString &message) const
 {
     KTrayMorph::debugLog(message);
+}
+
+QVariantMap TrayItemModel::loadAppSettings() const
+{
+    QVariantMap settings = defaultAppSettings(false);
+
+    QFile file(appSettingsPath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return settings;
+    }
+
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll());
+    if (!document.isObject()) {
+        return settings;
+    }
+
+    const QJsonObject object = document.object();
+    settings[QStringLiteral("exists")] = true;
+    settings[QStringLiteral("active")] = object.value(QStringLiteral("active")).toBool(settings.value(QStringLiteral("active")).toBool());
+    settings[QStringLiteral("enableLogging")] = object.value(QStringLiteral("enableLogging")).toBool(settings.value(QStringLiteral("enableLogging")).toBool());
+    settings[QStringLiteral("logFilePath")] = object.value(QStringLiteral("logFilePath")).toString(settings.value(QStringLiteral("logFilePath")).toString());
+
+    const int pollIntervalMs = object.value(QStringLiteral("pollIntervalMs")).toInt(settings.value(QStringLiteral("pollIntervalMs")).toInt());
+    settings[QStringLiteral("pollIntervalMs")] = std::clamp(pollIntervalMs, 250, 5000);
+    return settings;
+}
+
+bool TrayItemModel::saveAppSettings(bool active, bool enableLogging, const QString &logFilePath, int pollIntervalMs)
+{
+    const QString path = appSettingsPath();
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    QJsonObject object;
+    object.insert(QStringLiteral("active"), active);
+    object.insert(QStringLiteral("enableLogging"), enableLogging);
+    object.insert(QStringLiteral("logFilePath"), logFilePath.trimmed().isEmpty() ? QStringLiteral("/tmp/ktraymorph.log") : logFilePath.trimmed());
+    object.insert(QStringLiteral("pollIntervalMs"), std::clamp(pollIntervalMs, 250, 5000));
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+
+    file.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
+    return file.commit();
 }
 
 void TrayItemModel::refresh()

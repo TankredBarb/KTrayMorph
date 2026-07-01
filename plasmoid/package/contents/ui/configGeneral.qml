@@ -13,6 +13,10 @@ KCM.SimpleKCM {
     property alias cfg_enableLogging: enableLogging.checked
     property alias cfg_logFilePath: logFilePath.text
     property alias cfg_pollIntervalMs: pollIntervalMs.value
+    property bool cfg_activeDefault: true
+    property bool cfg_enableLoggingDefault: false
+    property string cfg_logFilePathDefault: "/tmp/ktraymorph.log"
+    property int cfg_pollIntervalMsDefault: 850
 
     Kirigami.FormLayout {
         anchors.fill: parent

@@ -53,6 +53,8 @@ public:
     Q_INVOKABLE int searchIconNames(const QString &filter, int limit);
     Q_INVOKABLE void configureLogging(bool enabled, const QString &path);
     Q_INVOKABLE void debugLog(const QString &message) const;
+    Q_INVOKABLE QVariantMap loadAppSettings() const;
+    Q_INVOKABLE bool saveAppSettings(bool active, bool enableLogging, const QString &logFilePath, int pollIntervalMs);
 
 Q_SIGNALS:
     void itemsAboutToReload();

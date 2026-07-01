@@ -83,6 +83,14 @@ Rules are stored in:
 ~/.config/ktraymorph/rules.json
 ```
 
+Application settings are stored in:
+
+```text
+~/.config/ktraymorph/settings.json
+```
+
+KTrayMorph mirrors the Plasma configuration UI into this file and reads it on startup, so core settings do not depend only on Plasma's applet config cache.
+
 The applet settings provide:
 
 - active enable/disable for all replacements;

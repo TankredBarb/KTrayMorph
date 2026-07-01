@@ -120,6 +120,8 @@ Implemented files:
 Current behavior:
 
 - Loads and saves rules from `~/.config/ktraymorph/rules.json`.
+- Loads and saves app-level settings from `~/.config/ktraymorph/settings.json`.
+- Mirrors Plasma configuration UI values into the app-level settings file and reads that file on startup.
 - Supports development override through `KTRAYMORPH_RULES_FILE`.
 - Creates a replacement rule from a detected item.
 - Replaces older matching rules for the same item when saving a new one.
