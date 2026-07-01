@@ -1,0 +1,53 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+Testing/
+
+# Generated Qt/QML artifacts
+.qt/
+*.qmltypes
+*_qmltyperegistrations.cpp
+*_qml_module_dir_map.qrc
+*_autogen/
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+
+# Binaries and libraries
+*.a
+*.so
+*.so.*
+*.dll
+*.dylib
+*.exe
+
+# IDE/editor files
+*.user
+*.user.*
+*.autosave
+.kdev4/
+*.kdev4
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local runtime and packaging artifacts
+.backup/
+*.log
+*.kate-swp
+*.tar
+*.tar.gz
+*.tar.xz
+*.zip

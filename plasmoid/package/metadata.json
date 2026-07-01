@@ -1,0 +1,24 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "tankred666@gmail.com",
+                "Name": "tankred"
+            }
+        ],
+        "Category": "Utilities",
+        "Description": "Replace KDE Plasma system tray icons",
+        "EnabledByDefault": false,
+        "Icon": "org.ktraymorph.plasmoid",
+        "Id": "org.ktraymorph.plasmoid",
+        "License": "LGPL-3.0-or-later",
+        "Name": "KTrayMorph",
+        "Version": "0.1.0"
+    },
+    "X-Plasma-API": "declarativeappletscript",
+    "X-Plasma-API-Minimum-Version": "6.0",
+    "X-Plasma-MainScript": "ui/main.qml",
+    "X-Plasma-NotificationArea": "true",
+    "X-Plasma-NotificationAreaCategory": "SystemServices"
+}

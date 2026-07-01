@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="62"
+   height="62"
+   viewBox="0 0 62 62"
+   version="1.1"
+   xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Light Blue Base Outline Gradient -->
+    <linearGradient id="bgShadowGrad" x1="0" y1="0" x2="62" y2="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#bbdefb" />
+      <stop offset="1" stop-color="#90caf9" />
+    </linearGradient>
+
+    <!-- Slot Binder Strip Gradient (Light Blue Theme) -->
+    <linearGradient id="slotStripGrad" x1="3" y1="4" x2="17.7" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e3f2fd" />
+      <stop offset="1" stop-color="#bbdefb" />
+    </linearGradient>
+
+    <!-- Main Card Body Gradient (Soft off-white to light gray-blue) -->
+    <linearGradient id="cardBodyGrad" x1="17.7" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" />
+      <stop offset="1" stop-color="#f5f7fa" />
+    </linearGradient>
+
+    <!-- Card Border Gradient -->
+    <linearGradient id="cardBorderGrad" x1="17.7" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#cfd8dc" />
+      <stop offset="1" stop-color="#b0bec5" />
+    </linearGradient>
+
+    <!-- Iris Sky-Blue Gradient -->
+    <linearGradient id="irisGrad" x1="33" y1="26" x2="43" y2="36" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4fc3f7" />
+      <stop offset="1" stop-color="#0288d1" />
+    </linearGradient>
+
+    <!-- Floating Icon 1 (Cyan/Blue) Gradient -->
+    <linearGradient id="icon1Grad" x1="44" y1="12" x2="54" y2="22" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#80d8ff" />
+      <stop offset="1" stop-color="#00b0ff" />
+    </linearGradient>
+
+    <!-- Floating Icon 2 (Pink/Magenta) Gradient -->
+    <linearGradient id="icon2Grad" x1="42" y1="38" x2="52" y2="48" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff80ab" />
+      <stop offset="1" stop-color="#f50057" />
+    </linearGradient>
+  </defs>
+
+  <!-- 1. Base Shadow/Outline Plate (matching Dolphin path78 but light blue) -->
+  <path
+     d="m 59.081109,50.189861 c 0,5.81014 -4.033306,9.110139 -9.007717,9.110139 H 13.924708 C 8.951247,59.3 4.918891,55.219763 4.918891,50.189861 V 13.810139 c 0,-5.0303802 4.032356,-9.1101391 9.005817,-9.1101391 h 36.148684 c 4.974411,0 9.007717,3.0998612 9.007717,8.9100001 z"
+     fill="url(#bgShadowGrad)" />
+
+  <!-- 2. Slot Binder Strip on the Left (matching Dolphin path100) -->
+  <path
+     d="m 17.733771,60 v 0 H 11 C 5.9999998,60 2.999997,57.000001 2.999997,52 V 12 C 2.999997,7.0000001 5.9999998,3.9999999 11,3.9999999 h 6.891178 v 0 z"
+     fill="url(#slotStripGrad)" />
+
+  <!-- 3. Slot Holes (7 vertical dots/capsules) -->
+  <rect x="14.6" y="7.5" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+  <rect x="14.6" y="12.1" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+  <rect x="14.6" y="16.7" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+  <rect x="14.6" y="21.3" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+  <rect x="14.6" y="25.9" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+  <rect x="14.6" y="30.5" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+  <rect x="14.6" y="35.1" width="1.2" height="3.0" rx="0.6" fill="#1976d2" />
+
+  <!-- 4. Main Card Body -->
+  <path
+     d="M 17.7,4 H 49 c 5,0 9.17,4.08 9.17,9.11 v 36.38 c 0,5.03 -4.1,9.11 -9.17,9.11 H 17.7 Z"
+     fill="url(#cardBodyGrad)"
+     stroke="url(#cardBorderGrad)"
+     stroke-width="0.8" />
+
+  <!-- 5. Stylized Eye (representing looking/observing tray icons) -->
+  <g id="gwenviewEye">
+    <!-- Eyeball (White) -->
+    <path
+       d="M 23,31 Q 36,16 49,31 Q 36,46 23,31 Z"
+       fill="#ffffff"
+       stroke="#1565c0"
+       stroke-width="1.8"
+       stroke-linejoin="round" />
+    <!-- Iris (Blue) -->
+    <circle
+       cx="36"
+       cy="31"
+       r="8.5"
+       fill="url(#irisGrad)"
+       stroke="#0d47a1"
+       stroke-width="0.6" />
+    <!-- Pupil (Dark) -->
+    <circle
+       cx="36"
+       cy="31"
+       r="4"
+       fill="#1a237e" />
+    <!-- Highlight -->
+    <circle
+       cx="38.5"
+       cy="28.5"
+       r="1.2"
+       fill="#ffffff" />
+  </g>
+
+  <!-- 6. Floating Icon 1 (Cyan/Blue Image Icon) -->
+  <rect x="45" y="11" width="10" height="10" rx="2" fill="url(#icon1Grad)" stroke="#0288d1" stroke-width="0.6" />
+  <!-- Inside Icon 1: Simplified landscape mountain shape -->
+  <path d="M 47,19 L 50,15 L 52,17 L 54,19 Z" fill="#ffffff" />
+  <circle cx="52" cy="13.5" r="0.8" fill="#ffffff" />
+
+  <!-- 7. Floating Icon 2 (Pink/Magenta Morphed Star/Check Icon) -->
+  <rect x="43" y="38" width="10" height="10" rx="2" fill="url(#icon2Grad)" stroke="#c2185b" stroke-width="0.6" />
+  <!-- Inside Icon 2: Simplified white checkmark/star -->
+  <path d="M 45.5,43 L 47.5,45.5 L 51,41.5" fill="none" stroke="#ffffff" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
