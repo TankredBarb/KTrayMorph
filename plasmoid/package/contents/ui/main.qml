@@ -117,7 +117,7 @@ PlasmoidItem {
             objectName: "ktraymorphOverlay"
             property Item targetItem: null
             property real targetOriginalOpacity: 1
-            property alias source: overlayIcon.source
+            property string source: ""
             property string replacementType: "themeIcon"
             property string replacementValue: ""
             readonly property bool tintLayerEnabled: tintOverlay.visible
@@ -132,15 +132,24 @@ PlasmoidItem {
                 id: overlayIcon
 
                 anchors.fill: parent
+                source: parent.source
                 smooth: true
-                visible: parent.replacementType !== "colorTint"
+                visible: parent.replacementType !== "colorTint" && parent.replacementType !== "localFile"
+            }
+
+            Image {
+                anchors.fill: parent
+                source: parent.source
+                smooth: true
+                fillMode: Image.PreserveAspectFit
+                visible: parent.replacementType === "localFile"
             }
 
             Kirigami.Icon {
                 id: tintSourceIcon
 
                 anchors.fill: parent
-                source: overlayIcon.source
+                source: parent.source
                 smooth: true
                 visible: false
             }
@@ -1241,18 +1250,36 @@ PlasmoidItem {
                         Layout.preferredHeight: Kirigami.Units.iconSizes.smallMedium
                     }
 
-                    PlasmaComponents3.TextField {
-                        id: replacementIconField
-
-                        text: root.replacementIconType === "localFile"
-                            ? root.fileName(root.replacementIconName)
-                            : root.replacementIconName
-                        placeholderText: "Icon name, custom file, or color"
-                        selectByMouse: true
+                    ColumnLayout {
+                        spacing: 0
                         Layout.fillWidth: true
-                        onTextEdited: {
-                            root.replacementIconType = "themeIcon";
-                            root.replacementIconName = text.trim();
+
+                        PlasmaComponents3.TextField {
+                            id: replacementIconField
+
+                            text: root.replacementIconType === "localFile"
+                                ? root.fileName(root.replacementIconName)
+                                : root.replacementIconName
+                            placeholderText: "Icon name, custom file, or color"
+                            selectByMouse: true
+                            Layout.fillWidth: true
+                            onTextEdited: {
+                                root.replacementIconType = "themeIcon";
+                                root.replacementIconName = text.trim();
+                            }
+                            Keys.onEscapePressed: function(event) {
+                                root.replacementIconName = "";
+                                event.accepted = true;
+                            }
+                        }
+
+                        PlasmaComponents3.Label {
+                            text: "Press Esc to clear"
+                            visible: root.replacementIconName.length > 0
+                            opacity: 0.6
+                            font: Kirigami.Theme.smallFont
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
                         }
                     }
 
@@ -1384,8 +1411,6 @@ PlasmoidItem {
                     icon.name: iconName.length > 0 ? iconName : "image-missing-symbolic"
 
                     Component.onCompleted: {
-                        root.debugLog("QML Item: " + title + " iconName=" + iconName
-                            + " hasPixmapIcon=" + hasPixmapIcon + " pixmapDataUrl len=" + pixmapDataUrl.length);
                         if (hasReplacement) {
                             Qt.callLater(function() {
                                 root.applyPersistedLiveReplacement(itemDelegate.stableId,
